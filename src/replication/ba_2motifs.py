@@ -41,7 +41,7 @@ def split_dataset(dataset: SynGraphDataset, batch_size: int = 32) \
     for i in range(num_graphs):
         x = x_split[i]
         edge_index = edge_split[i]
-        y = y_tensor[i].float()
+        y = y_tensor[i].long()
 
         graph = Data(x=x, edge_index=edge_index, y=y)
         graph_list.append(graph)
@@ -78,12 +78,12 @@ def split_dataset(dataset: SynGraphDataset, batch_size: int = 32) \
     return train_loader, dev_loader, test_loader, test_list
 
 
-def get_model():
+def get_model_1():
     device = get_device()
 
     input_dim = 10
     hidden_dim = 20
-    output_dim = 1
+    output_dim = 2
 
     model = Sequential(
         'x, edge_index, batch', [
@@ -95,17 +95,17 @@ def get_model():
             ReLU(inplace=True),
             (global_mean_pool, 'x, batch -> x'),
             Linear(hidden_dim, output_dim),
-            Sigmoid(),  # TODO: this is wrong, do not use yet
-            # Softmax(dim=1),
+            # Sigmoid(),  # single output scalar: value between [0, 1]
+            Softmax(dim=1),
         ]
     ).to(device)
 
     return model
 
-def train_model_or_load(train_loader, dev_loader):
-    save_dst = './checkpoints/ba_2motifs/gcn.pt'
-    model = get_model()
-    loss_func = torch.nn.MSELoss()
+def train_model_or_load_1(train_loader, dev_loader):
+    save_dst = './checkpoints/ba_2motifs/gcn_temp.pt'
+    model = get_model_1()
+    loss_func = torch.nn.CrossEntropyLoss()
 
     if os.path.isfile(save_dst):  # if checkpoint exists, load it
         model.load_state_dict(torch.load(save_dst))
@@ -113,22 +113,71 @@ def train_model_or_load(train_loader, dev_loader):
         optimizer = optim.Adam(model.parameters(), lr=0.005)
         num_epochs = 800
         output_freq = 5
-        train_model(model, True, optimizer, train_loader, dev_loader, num_epochs, loss_func, save_dst, output_freq)
+        train_model(model, False, optimizer, train_loader, dev_loader, num_epochs, loss_func, save_dst, output_freq)
 
     return model, loss_func
 
 
+def load_official_model():  # TODO: this does not work yet
+    save_dst = './checkpoints/ba_2motifs/gcn_latest.pth'
+    device = get_device()
+    loss_func = torch.nn.CrossEntropyLoss()
+    input_dim = 10
+    hidden_dim = 20
+    output_dim = 2
+
+    # convert official model to new pytorch version
+    model = Sequential(
+        'x, edge_index, batch', [
+            (GCNConv(input_dim, hidden_dim, normalize=True), 'x, edge_index -> x'),
+            ReLU(inplace=True),
+            (GCNConv(hidden_dim, hidden_dim, normalize=True), 'x, edge_index -> x'),
+            ReLU(inplace=True),
+            (GCNConv(hidden_dim, hidden_dim, normalize=True), 'x, edge_index -> x'),
+            ReLU(inplace=True),
+            (global_mean_pool, 'x, batch -> x'),
+            Linear(hidden_dim, output_dim),
+        ]
+    ).to(device)
+
+    # grab model weights
+    net = torch.load(save_dst)['net']
+    l0_w = net['model.gnn_layers.0.weight']
+    l0_b = net['model.gnn_layers.0.bias']
+    l1_w = net['model.gnn_layers.1.weight']
+    l1_b = net['model.gnn_layers.1.bias']
+    l2_w = net['model.gnn_layers.2.weight']
+    l2_b = net['model.gnn_layers.2.bias']
+    l3_w = net['model.mlps.0.weight']
+    l3_b = net['model.mlps.0.bias']
+
+    # copy weights into model parameters
+    with torch.no_grad():  # TODO: somehow the weights get messed up in conversion, model does not perform well
+        model.module_0.lin.weight.copy_(l0_w.T)
+        model.module_0.bias.copy_(l0_b)
+        model.module_2.lin.weight.copy_(l1_w.T)
+        model.module_2.bias.copy_(l1_b)
+        model.module_4.lin.weight.copy_(l2_w.T)
+        model.module_4.bias.copy_(l2_b)
+        model.module_7.weight.copy_(l3_w)
+        model.module_7.bias.copy_(l3_b.T)
+
+    return model, loss_func
+
+
+
 def main():
-    set_seed(0)  # IMPORTANT!
+    set_seed(1)  # IMPORTANT!
     dataset = download_and_prepare_datset()
-    batch_size = 32
+    batch_size = 100
     train_loader, dev_loader, test_loader, test_list = split_dataset(dataset, batch_size)
-    model, loss_func = train_model_or_load(train_loader, dev_loader)
-    # test_loss, test_acc = test(model, True, test_loader, loss_func)
-    # print(f'test loss: {test_loss}, test_acc: {test_acc}')
+    # model, loss_func = load_official_model()
+    model, loss_func = train_model_or_load_1(train_loader, dev_loader)
+    test_loss, test_acc = test(model, False, test_loader, loss_func)
+    print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
     # explanation
-    subgraphx = SubgraphX(model, num_layers=3, exp_weight=10, m=20, t=100, single_output=True)
+    subgraphx = SubgraphX(model, num_layers=3, exp_weight=10, m=20, t=100)
 
     graph = test_list[51]
     nx_graph = to_networkx(graph, to_undirected=True)
@@ -137,19 +186,19 @@ def main():
     print(graph)
 
     predicted_class = get_predicted_class(model, graph.x, graph.edge_index, torch.zeros(graph.num_nodes).long(),
-                                          single_output=True)
-    print(predicted_class)
+                                          single_output=False)
+    print(f'predicted: {predicted_class}')
 
     explanation_set, mcts = subgraphx(graph, n_min=10)
     pruned_nodes = set(range(graph.num_nodes)) - explanation_set
-    print(pruned_nodes)
-    print(explanation_set)
-    # mcts.print_tree_sequential() # only works for small trees
+    print(f'pruned: {pruned_nodes}')
+    print(f'explanation: {explanation_set}')
+    # mcts.print_tree_sequential() # only works for very small trees
 
     sparsity_score = sparsity(graph, explanation_set)
     print(f'sparsity: {sparsity_score}')
 
-    fidelity_score = fidelity(graph, explanation_set, model, single_output=True)
+    fidelity_score = fidelity(graph, explanation_set, model)
     print(f'fidelity: {fidelity_score}')
 
     print('done')

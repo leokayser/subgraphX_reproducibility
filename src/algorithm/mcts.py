@@ -33,7 +33,7 @@ class MCTSNode:
 
 class MCTS:
     def __init__(self, graph: Data, exp_weight: float, n_min: int, score_func: Callable, model: torch.nn.Module,
-                 t: int, num_layers: int, single_output: bool):
+                 t: int, num_layers: int, high2low: bool = True, max_children: int = -1):
         self.W = defaultdict(float)  # total reward of each node
         self.C = defaultdict(int)  # total visit count for each node
         self.children: Dict[MCTSNode, List[MCTSNode]] = {}  # nodes and their children
@@ -43,11 +43,13 @@ class MCTS:
         self.exp_weight = exp_weight  # lambda
         self.n_min = n_min
         self.score_func = score_func
-        self.single_output = single_output
         self.graph = graph
         self.model = model
         self.t = t
         self.num_layers = num_layers
+
+        self.high2low = high2low
+        self.max_children = max_children  # negative number means consider all nodes
 
         self.root = MCTSNode(graph, n_min, set(range(graph.num_nodes)))
 
@@ -60,8 +62,7 @@ class MCTS:
         if mcts_node in self.R.keys():
             return self.R[mcts_node]
         else:
-            score = self.score_func(self.model, self.graph, mcts_node.node_set, self.t, self.num_layers,
-                                    self.single_output)
+            score = self.score_func(self.model, self.graph, mcts_node.node_set, self.t, self.num_layers)
             self.R[mcts_node] = score
             return score
 
@@ -104,7 +105,13 @@ class MCTS:
         children = []
         nx_graph = to_networkx(self.graph, to_undirected=True)  # connected components only works for directed graphs
 
-        for node in mcts_node.node_set:
+        # sort nodes according to pruning strategy and only consider first k nodes
+        nodes_to_prune = list(mcts_node.node_set.copy())
+        nodes_to_prune.sort(key=lambda x: nx_graph.degree(x), reverse=self.high2low)
+        if self.max_children >= 0:
+            nodes_to_prune = nodes_to_prune[:self.max_children]
+
+        for node in nodes_to_prune:
             subgraph = nx_graph.subgraph(mcts_node.node_set - {node})
             components = nx.connected_components(subgraph)
             child_set = max(components, key=lambda x: len(x))  # only keep largest connected component
@@ -112,7 +119,7 @@ class MCTS:
             child = MCTSNode(self.graph, self.n_min, child_set)
             children.append(child)
 
-        self.children[mcts_node] = children  # TODO: sort children according to strategy
+        self.children[mcts_node] = children
         return children
 
     def _backpropagate(self, path):

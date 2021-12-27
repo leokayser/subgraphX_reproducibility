@@ -8,11 +8,11 @@ from torch_geometric.loader import DataLoader
 from src.utils.utils import get_device
 
 
-def compute_accuracy(pred: torch.Tensor, target: torch.Tensor) -> float:
+def compute_accuracy(pred: torch.Tensor, target: torch.Tensor) -> Tuple[float, float]:
     correct = (pred == target)
     num_correct = correct.sum().item()
     num_items = correct.shape[0]
-    return num_correct / num_items
+    return num_correct, num_items
 
 
 def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Union[optim.Optimizer, None],
@@ -21,7 +21,8 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
     model = model.to(device)
 
     loss = 0
-    acc = 0
+    correct = 0
+    num_items = 0
 
     for graph in iter(loader):
         if train:
@@ -30,6 +31,9 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
         scores = model(graph.x.to(device), graph.edge_index.to(device), graph.batch.to(device))
         if single_output:
             scores = scores.squeeze()
+
+        # y = torch.nn.functional.one_hot(graph.y.to(device), num_classes=2).float()
+        # cur_loss = loss_func(scores, y)
         cur_loss = loss_func(scores, graph.y.to(device))
 
         if train:
@@ -40,11 +44,13 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
             pred = torch.round(scores).detach().cpu()
         else:
             pred = torch.argmax(scores, dim=1).detach().cpu()
-        acc += compute_accuracy(pred, graph.y)
+        cur_correct, cur_num_items = compute_accuracy(pred, graph.y)
+        correct += cur_correct
+        num_items += cur_num_items
         loss += cur_loss.detach().cpu().item()
 
     loss /= len(loader)
-    acc /= len(loader)
+    acc = correct / num_items
 
     return loss, acc
 

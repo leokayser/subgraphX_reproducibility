@@ -10,44 +10,33 @@ from src.utils.utils import get_device
 
 
 @torch.no_grad()
-def _aggregate_scores(loader, model, class_idx, single_output: bool) -> torch.Tensor:
+def _aggregate_scores(loader, model, class_idx) -> torch.Tensor:
     device = get_device()
     result = torch.tensor([]).float()
     for data in iter(loader):
         scores = model(data.x.to(device), data.edge_index.to(device), data.batch.to(device)).detach().cpu()
-        if single_output:
-            score_of_class = scores.squeeze()
-        else:
-            score_of_class = scores[:, class_idx]
-
+        score_of_class = scores[:, class_idx]
         result = torch.cat((result, score_of_class), dim=0)
+
     return result
 
 
 @torch.no_grad()
-def _compute_marginal_contribution(include_list, exclude_list, model, class_idx, single_output: bool) -> float:
+def _compute_marginal_contribution(include_list, exclude_list, model, class_idx) -> float:
     include_loader = DataLoader(include_list, batch_size=64, shuffle=False, num_workers=0)
     exclude_loader = DataLoader(exclude_list, batch_size=64, shuffle=False, num_workers=0)
 
-    include_scores = _aggregate_scores(include_loader, model, class_idx, single_output)
-    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx, single_output)
+    include_scores = _aggregate_scores(include_loader, model, class_idx)
+    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx)
 
-    contribution = torch.mean(include_scores - exclude_scores).item()  # TODO: this is technically wrong for single_output and class 0
+    contribution = torch.mean(include_scores - exclude_scores).item()
     return contribution
 
 
 @torch.no_grad()
-def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int,
-                 single_output: bool) -> float:
+def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int) -> float:
     """
     Shapley computation by monte carlo approximation in local neighborhood
-    :param model:
-    :param graph:
-    :param subgraph:
-    :param t:
-    :param num_layers:
-    :param single_output:
-    :return:
     """
     device = get_device()
     # initialize coalition space
@@ -67,10 +56,7 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
     if len(scores.shape) > 1:
         scores = scores.squeeze()
 
-    if single_output:
-        predicted_class = int(torch.round(scores).item())
-    else:
-        predicted_class = torch.argmax(scores, dim=0).item()
+    predicted_class = torch.argmax(scores, dim=0).item()
 
     exclude_data_list = []
     include_data_list = []
@@ -94,5 +80,5 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
         exclude_data = Data(masked_x_exclude.float(), graph.edge_index)
         exclude_data_list.append(exclude_data)
 
-    score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class, single_output)
+    score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class)
     return score
