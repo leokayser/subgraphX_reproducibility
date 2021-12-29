@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import torch
+import torch_geometric
 from torch_geometric.data import Data
 
 
@@ -13,6 +14,7 @@ def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch_geometric.seed_everything(seed)
 
 
 def get_scores(model: torch.nn.Module, x: torch.tensor, edge_index: torch.tensor, batch: torch.tensor,
