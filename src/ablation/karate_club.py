@@ -13,6 +13,8 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential
 
+from src.algorithm.subgraph_x import SubgraphX
+from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
 from src.utils.utils import get_device, set_seed
@@ -139,6 +141,7 @@ def train_or_load_gcn(train_loader, val_loader):
     save_path = './checkpoints/karate_club/gcn.pt'
     model = get_gcn_model()
     loss_func = torch.nn.CrossEntropyLoss()
+    device = get_device()
 
     if os.path.isfile(save_path):
         model.load_state_dict(torch.load(save_path))
@@ -150,13 +153,69 @@ def train_or_load_gcn(train_loader, val_loader):
                     task=Task.NODE_CLASSIFICATION)
 
     # cross entropy loss already contains softmax, therefore just add softmax layer after training
-    model.add_module('softmax', Softmax(dim=1))
+    result_model = Sequential(
+        'x, edge_index, batch', [
+            (model, 'x, edge_index, batch -> x'),
+            Softmax(dim=1),
+        ]
+    ).to(device)
 
-    return model, loss_func
+    # model.add_module('module_3', Softmax(dim=1))
+
+    return result_model, loss_func
+
+def debug(model, test_loader):
+    device = get_device()
+    # get scores for test set
+    test_graph = next(iter(test_loader))
+    test_mask = test_graph.test_mask
+
+    scores = model(test_graph.x.to(device), test_graph.edge_index.to(device),
+                   test_graph.batch.to(device)).detach().cpu()
+    pred = torch.argmax(scores, dim=1)
+
+    test_node_idx = torch.arange(0, num_nodes)[test_mask]
+    test_scores = scores[test_mask]
+    test_pred = pred[test_mask]
+    truth = test_graph.y[test_mask]
+
+    node = test_node_idx[0].item()
+    print(f'testing explanation for node {node}')
+    subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=50, t=50, task=Task.NODE_CLASSIFICATION)
+    explanation_set, mcts = subgraphx(test_graph, n_min=10, nodes_to_keep=[node])
+    print(f'explanation: {explanation_set}')
+
+    sparsity_score = sparsity(test_graph, explanation_set)
+    print(f'sparsity: {sparsity_score}')
+
+    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, index_of_interest=node)
+    print(f'fidelity: {fidelity_score}')
+
+
+def debug_2(model, test_loader):
+    device = get_device()
+    # get scores for test set
+    test_graph = next(iter(test_loader))
+    test_mask = test_graph.test_mask
+
+    scores = model(test_graph.x.to(device), test_graph.edge_index.to(device),
+                   test_graph.batch.to(device)).detach().cpu()
+    pred = torch.argmax(scores, dim=1)
+
+    test_node_idx = torch.arange(0, num_nodes)[test_mask]
+    test_scores = scores[test_mask]
+    test_pred = pred[test_mask]
+    truth = test_graph.y[test_mask]
+
+    node = test_node_idx[0].item()
+    print(f'testing explanation for node {node}')
+
+
 
 def main():
     dataset = torch_geometric.datasets.KarateClub()
     graph = dataset.data
+    device = get_device()
 
     # print graph
     color_map = []
@@ -181,6 +240,13 @@ def main():
     model, loss_func = train_or_load_gcn(train_loader, val_loader)
     test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
+
+
+    debug_2(model, test_loader)
+
+
+    pass
+
 
 
 if __name__ == '__main__':

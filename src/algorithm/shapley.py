@@ -6,55 +6,76 @@ from torch_geometric.utils import k_hop_subgraph
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
+from src.utils.task_enum import Task
 from src.utils.utils import get_device
 
 
 @torch.no_grad()
-def _aggregate_scores(loader, model, class_idx) -> torch.Tensor:
+def _aggregate_scores(loader, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
+                      index_of_interest: int = -1) -> torch.Tensor:
     device = get_device()
     result = torch.tensor([]).float()
     for data in iter(loader):
         scores = model(data.x.to(device), data.edge_index.to(device), data.batch.to(device)).detach().cpu()
-        score_of_class = scores[:, class_idx]
+        if task == Task.GRAPH_CLASSIFICATION:
+            score_of_class = scores[:, class_idx]
+        elif task == Task.NODE_CLASSIFICATION:
+            idx_in_batch = data.ptr[:-1] + index_of_interest  # ignore last pointer and find nodes in batched graphs
+            score_of_node = torch.index_select(scores, dim=0, index=idx_in_batch)
+            score_of_class = score_of_node[:, class_idx]  # get scores of predicted class
+        else:
+            raise NotImplementedError('link pred')
         result = torch.cat((result, score_of_class), dim=0)
 
     return result
 
 
 @torch.no_grad()
-def _compute_marginal_contribution(include_list, exclude_list, model, class_idx) -> float:
+def _compute_marginal_contribution(include_list, exclude_list, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
+                                   index_of_interest: int = -1) -> float:
     include_loader = DataLoader(include_list, batch_size=64, shuffle=False, num_workers=0)
     exclude_loader = DataLoader(exclude_list, batch_size=64, shuffle=False, num_workers=0)
 
-    include_scores = _aggregate_scores(include_loader, model, class_idx)
-    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx)
+    include_scores = _aggregate_scores(include_loader, model, class_idx, task, index_of_interest)
+    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx, task, index_of_interest)
 
     contribution = torch.mean(include_scores - exclude_scores).item()
     return contribution
 
 
 @torch.no_grad()
-def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int) -> float:
+def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int,
+                 task: Task = Task.GRAPH_CLASSIFICATION, index_of_interest: int = -1) -> float:
     """
     Shapley computation by monte carlo approximation in local neighborhood
     """
     device = get_device()
     # initialize coalition space
     subgraph_list = list(subgraph)  # v1 to vk
-    node_tensor, edge_index, mapping, _ = k_hop_subgraph(subgraph_list, num_layers, graph.edge_index,
-                                                         relabel_nodes=False, num_nodes=graph.num_nodes,
-                                                         flow='source_to_target')  # source to target is important
+    if task == Task.GRAPH_CLASSIFICATION:
+        node_tensor, edge_index, mapping, _ = k_hop_subgraph(subgraph_list, num_layers, graph.edge_index,
+                                                             relabel_nodes=False, num_nodes=graph.num_nodes,
+                                                             flow='source_to_target')  # source to target is important
+    elif task == Task.NODE_CLASSIFICATION:
+        node_tensor, edge_index, mapping, _ = k_hop_subgraph([index_of_interest], num_layers, graph.edge_index,
+                                                             relabel_nodes=False, num_nodes=graph.num_nodes,
+                                                             flow='source_to_target')  # source to target is important
+    else:
+        raise NotImplementedError('link')
+
     reachable_list = node_tensor.tolist()  # v1 to vr
     p_prime = list(set(reachable_list) - set(subgraph_list))
 
     placeholder = graph.num_nodes
     p = p_prime + [placeholder]
 
-    # assuming graph classification
     scores = model(x=graph.x.to(device), edge_index=graph.edge_index.to(device),
                    batch=torch.zeros(graph.num_nodes).long().to(device)).detach().cpu()
     if len(scores.shape) > 1:
         scores = scores.squeeze()
+
+    if task == Task.NODE_CLASSIFICATION:
+        scores = scores[index_of_interest]  # get score for target node
 
     predicted_class = torch.argmax(scores, dim=0).item()
 
@@ -80,5 +101,6 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
         exclude_data = Data(masked_x_exclude.float(), graph.edge_index)
         exclude_data_list.append(exclude_data)
 
-    score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class)
+    score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class, task,
+                                           index_of_interest)
     return score
