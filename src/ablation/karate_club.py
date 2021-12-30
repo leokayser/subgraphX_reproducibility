@@ -1,5 +1,6 @@
 import os
 import random
+import time
 
 import networkx as nx
 import numpy as np
@@ -14,6 +15,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential, GNNExplainer
 
 from src.algorithm.subgraph_x import SubgraphX
+from src.utils.logging import load_data, save_data
 from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
@@ -221,9 +223,62 @@ def debug_2(model, test_loader):
     explanation_set = convert_edge_mask_to_subset(test_graph.edge_index, edge_mask, n_min=10,
                                                   task=Task.NODE_CLASSIFICATION, node_to_explain=node)
 
-    pass
+    print(f'explanation: {explanation_set}')
 
+    sparsity_score = sparsity(test_graph, explanation_set)
+    print(f'sparsity: {sparsity_score}')
 
+    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, index_of_interest=node)
+    print(f'fidelity: {fidelity_score}')
+
+"""
+For every node in the test set multiple data points are collected. Each point consists of: 
+(1) explanation node set
+(2) sparsity
+(3) fidelity
+(4) time to compute explanation (seconds)
+"""
+def collect_subgraphx_expl(model, test_loader):
+    device = get_device()
+
+    # nodes of test set
+    test_graph = next(iter(test_loader))
+    test_mask = test_graph.test_mask
+    test_node_idx = torch.arange(0, num_nodes)[test_mask].tolist()
+
+    path = './results/karate_club/subgraphx_dict'
+    if os.path.isfile(path):
+        res_dict = load_data(path)
+    else:
+        res_dict = dict()
+        for node in test_node_idx:
+            res_dict[node] = []
+        # save_data(path, res_dict)
+
+    # collect explanations for all nodes with a fixed n_min
+    subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=30, t=50, task=Task.NODE_CLASSIFICATION)
+
+    for n_min in [4, 5, 6, 7, 8, 9, 11, 12]:
+        counter = 1
+        print(f'\nstarting {n_min}')
+        for node in test_node_idx:
+            start_time = time.time()
+            explanation_set, _ = subgraphx(test_graph, n_min=n_min, nodes_to_keep=[node])
+
+            end_time = time.time()
+            duration = end_time - start_time
+
+            sparsity_score = sparsity(test_graph, explanation_set)
+            fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
+                                      index_of_interest=node)
+
+            result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
+            res_dict[node] = res_dict[node] + [result_tuple]
+            print(f'finished node {counter} of {len(test_node_idx)}')
+            counter += 1
+
+    # save_data(path, res_dict)
+    return res_dict
 
 def main():
     dataset = torch_geometric.datasets.KarateClub()
@@ -251,15 +306,13 @@ def main():
 
     # then train gcn
     model, loss_func = train_or_load_gcn(train_loader, val_loader)
-    test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
-    print(f'test loss: {test_loss}, test_acc: {test_acc}')
+    # test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
+    # print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
+    # debug(model, test_loader)
+    # debug_2(model, test_loader)
 
-    debug_2(model, test_loader)
-
-
-    pass
-
+    collect_subgraphx_expl(model, test_loader)
 
 
 if __name__ == '__main__':
