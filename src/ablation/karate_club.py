@@ -11,13 +11,13 @@ from torch.nn import ReLU, Linear, Softmax
 from torch.optim import Adam
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, Sequential
+from torch_geometric.nn import GCNConv, Sequential, GNNExplainer
 
 from src.algorithm.subgraph_x import SubgraphX
 from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
-from src.utils.utils import get_device, set_seed
+from src.utils.utils import get_device, set_seed, convert_edge_mask_to_subset
 
 batch_size = 1  # there is only a single graph in the dataset
 num_classes = 4
@@ -210,6 +210,19 @@ def debug_2(model, test_loader):
     node = test_node_idx[0].item()
     print(f'testing explanation for node {node}')
 
+    explainer = GNNExplainer(model, epochs=200, return_type='prob')
+    batch = torch.zeros(num_nodes).to(device)
+    node_feat_mask, edge_mask = explainer.explain_node(node, test_graph.x.to(device), test_graph.edge_index.to(device),
+                                                       batch=batch)
+
+    ax, G = explainer.visualize_subgraph(node, test_graph.edge_index, edge_mask, y=test_graph.y)
+    plt.show()
+
+    explanation_set = convert_edge_mask_to_subset(test_graph.edge_index, edge_mask, n_min=10,
+                                                  task=Task.NODE_CLASSIFICATION, node_to_explain=node)
+
+    pass
+
 
 
 def main():
@@ -228,8 +241,8 @@ def main():
             color_map.append('green')
         elif graph.y[node].item() == 3:
             color_map.append('white')
-    nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
-    nx.draw(nx_graph, node_color=color_map, with_labels=True)
+    # nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
+    # nx.draw(nx_graph, node_color=color_map, with_labels=True)
     # plt.show()
 
     # first train embedding
