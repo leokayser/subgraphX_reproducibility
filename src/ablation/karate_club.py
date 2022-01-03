@@ -1,6 +1,7 @@
 import os
 import random
 import time
+from typing import Dict
 
 import networkx as nx
 import numpy as np
@@ -15,11 +16,12 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GCNConv, Sequential, GNNExplainer
 
 from src.algorithm.subgraph_x import SubgraphX
-from src.utils.logging import load_data, save_data
+from src.utils.logging import load_data, save_data, aggregate_fidelity_sparsity, compute_avg_runtime, save_str
 from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
 from src.utils.utils import get_device, set_seed, convert_edge_mask_to_subset
+from src.utils.visualization import plot_results
 
 batch_size = 1  # there is only a single graph in the dataset
 num_classes = 4
@@ -246,7 +248,7 @@ def collect_subgraphx_expl(model, test_loader):
     test_mask = test_graph.test_mask
     test_node_idx = torch.arange(0, num_nodes)[test_mask].tolist()
 
-    path = './results/karate_club/subgraphx_dict'
+    path = './result_data/karate_club/subgraphx_dict'
     if os.path.isfile(path):
         res_dict = load_data(path)
     else:
@@ -258,7 +260,7 @@ def collect_subgraphx_expl(model, test_loader):
     # collect explanations for all nodes with a fixed n_min
     subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=30, t=50, task=Task.NODE_CLASSIFICATION)
 
-    for n_min in [4, 5, 6, 7, 8, 9, 11, 12]:
+    for n_min in [4, 5, 6, 7, 8, 9, 10, 11, 12]:
         counter = 1
         print(f'\nstarting {n_min}')
         for node in test_node_idx:
@@ -274,11 +276,60 @@ def collect_subgraphx_expl(model, test_loader):
 
             result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
             res_dict[node] = res_dict[node] + [result_tuple]
-            print(f'finished node {counter} of {len(test_node_idx)}')
-            counter += 1
+        print(f'finished node {counter} of {len(test_node_idx)}')
+        counter += 1
 
     # save_data(path, res_dict)
     return res_dict
+
+
+def collect_gnn_expl(model, test_loader) -> Dict:
+    device = get_device()
+
+    # nodes of test set
+    test_graph = next(iter(test_loader))
+    test_mask = test_graph.test_mask
+    test_node_idx = torch.arange(0, num_nodes)[test_mask].tolist()
+
+    path = './result_data/karate_club/ggn_exp_dict'
+    if os.path.isfile(path):
+        res_dict = load_data(path)
+    else:
+        res_dict = dict()
+        for node in test_node_idx:
+            res_dict[node] = []
+        # save_data(path, res_dict)
+
+    # collect explanations for all nodes with a fixed n_min
+    explainer = GNNExplainer(model, epochs=2000, return_type='prob')
+
+    counter = 1
+    for node in test_node_idx:
+        print(f'\nstarting {counter} of {len(test_node_idx)}')
+        start_time = time.time()
+
+        batch = torch.zeros(num_nodes).to(device)
+        node_feat_mask, edge_mask = explainer.explain_node(node, test_graph.x.to(device),
+                                                           test_graph.edge_index.to(device),
+                                                           batch=batch)
+        end_time = time.time()
+        duration = end_time - start_time
+
+        for n_min in [4, 5, 6, 7, 8, 9, 10, 11, 12]:
+            explanation_set = convert_edge_mask_to_subset(test_graph.edge_index, edge_mask, n_min=n_min,
+                                                          task=Task.NODE_CLASSIFICATION, node_to_explain=node)
+            sparsity_score = sparsity(test_graph, explanation_set)
+            fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
+                                      index_of_interest=node)
+
+            result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
+            res_dict[node] = res_dict[node] + [result_tuple]
+        print(f'finished {counter} of {len(test_node_idx)}')
+        counter += 1
+
+    # save_data(path, res_dict)
+    return res_dict
+
 
 def main():
     dataset = torch_geometric.datasets.KarateClub()
@@ -295,9 +346,10 @@ def main():
         elif graph.y[node].item() == 2:
             color_map.append('green')
         elif graph.y[node].item() == 3:
-            color_map.append('white')
-    # nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
+            color_map.append('yellow')
+    nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
     # nx.draw(nx_graph, node_color=color_map, with_labels=True)
+    # plt.savefig('./img/karate_club/graph.png')
     # plt.show()
 
     # first train embedding
@@ -309,10 +361,30 @@ def main():
     # test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
     # print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
+    # debug both explanation methods
     # debug(model, test_loader)
     # debug_2(model, test_loader)
 
-    collect_subgraphx_expl(model, test_loader)
+    # collect_subgraphx_expl(model, test_loader)
+    # collect_gnn_expl(model, test_loader)
+
+    sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
+    sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
+    sx_runtime = compute_avg_runtime(sx_dict)
+
+    gnn_dict = load_data('./result_data/karate_club/ggn_exp_dict')
+    gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
+    gnn_runtime = compute_avg_runtime(gnn_dict)
+
+    # plot graph
+    # sparsity_list = [sx_sparsity, gnn_sparsity]
+    # fidelity_list = [sx_fidelity, gnn_fidelity]
+    # labels = ['SubgraphX', 'GNN Explainer']
+    # plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/karate_club/karate_results.png')
+
+    # save runtime to file
+    # data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}'
+    # save_str(path='./result_data/karate_club/runtime.txt', data=data_str)
 
 
 if __name__ == '__main__':
