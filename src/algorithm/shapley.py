@@ -12,19 +12,25 @@ from src.utils.utils import get_device
 
 @torch.no_grad()
 def _aggregate_scores(loader, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
-                      index_of_interest: int = -1) -> torch.Tensor:
+                      nodes_to_keep: List[int] = None) -> torch.Tensor:
     device = get_device()
     result = torch.tensor([]).float()
     for data in iter(loader):
-        scores = model(data.x.to(device), data.edge_index.to(device), data.batch.to(device)).detach().cpu()
         if task == Task.GRAPH_CLASSIFICATION:
+            scores = model(data.x.to(device), data.edge_index.to(device), data.batch.to(device)).detach().cpu()
             score_of_class = scores[:, class_idx]
         elif task == Task.NODE_CLASSIFICATION:
-            idx_in_batch = data.ptr[:-1] + index_of_interest  # ignore last pointer and find nodes in batched graphs
+            scores = model(data.x.to(device), data.edge_index.to(device), data.batch.to(device)).detach().cpu()
+            node_index = nodes_to_keep[0]
+            idx_in_batch = data.ptr[:-1] + node_index  # ignore last pointer and find nodes in batched graphs
             score_of_node = torch.index_select(scores, dim=0, index=idx_in_batch)
             score_of_class = score_of_node[:, class_idx]  # get scores of predicted class
-        else:
-            raise NotImplementedError('link pred')
+        else:  # link prediction
+            x1 = torch.tensor([nodes_to_keep[0]]).long().to(device)  # node 1 of edge
+            x2 = torch.tensor([nodes_to_keep[1]]).long().to(device)  # node 2 of edge
+            scores = model(x=data.x.to(device), edge_index=data.edge_index.to(device), x1=x1, x2=x2,
+                           ptr=data.ptr.to(device)).detach().cpu()
+            score_of_class = scores[:, class_idx]
         result = torch.cat((result, score_of_class), dim=0)
 
     return result
@@ -32,12 +38,12 @@ def _aggregate_scores(loader, model, class_idx, task: Task = Task.GRAPH_CLASSIFI
 
 @torch.no_grad()
 def _compute_marginal_contribution(include_list, exclude_list, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
-                                   index_of_interest: int = -1) -> float:
+                                   nodes_to_keep: List[int] = None) -> float:
     include_loader = DataLoader(include_list, batch_size=64, shuffle=False, num_workers=0)
     exclude_loader = DataLoader(exclude_list, batch_size=64, shuffle=False, num_workers=0)
 
-    include_scores = _aggregate_scores(include_loader, model, class_idx, task, index_of_interest)
-    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx, task, index_of_interest)
+    include_scores = _aggregate_scores(include_loader, model, class_idx, task, nodes_to_keep)
+    exclude_scores = _aggregate_scores(exclude_loader, model, class_idx, task, nodes_to_keep)
 
     contribution = torch.mean(include_scores - exclude_scores).item()
     return contribution
@@ -45,7 +51,7 @@ def _compute_marginal_contribution(include_list, exclude_list, model, class_idx,
 
 @torch.no_grad()
 def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int,
-                 task: Task = Task.GRAPH_CLASSIFICATION, index_of_interest: int = -1) -> float:
+                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None) -> float:
     """
     Shapley computation by monte carlo approximation in local neighborhood
     """
@@ -57,11 +63,14 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
                                                              relabel_nodes=False, num_nodes=graph.num_nodes,
                                                              flow='source_to_target')  # source to target is important
     elif task == Task.NODE_CLASSIFICATION:
-        node_tensor, edge_index, mapping, _ = k_hop_subgraph([index_of_interest], num_layers, graph.edge_index,
+        node_index: int = nodes_to_keep[0]
+        node_tensor, edge_index, mapping, _ = k_hop_subgraph(nodes_to_keep, num_layers, graph.edge_index,
                                                              relabel_nodes=False, num_nodes=graph.num_nodes,
                                                              flow='source_to_target')  # source to target is important
     else:
-        raise NotImplementedError('link')
+        node_tensor, edge_index, mapping, _ = k_hop_subgraph(nodes_to_keep, num_layers, graph.edge_index,
+                                                             relabel_nodes=False, num_nodes=graph.num_nodes,
+                                                             flow='source_to_target')  # source to target is important
 
     reachable_list = node_tensor.tolist()  # v1 to vr
     p_prime = list(set(reachable_list) - set(subgraph_list))
@@ -69,13 +78,19 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
     placeholder = graph.num_nodes
     p = p_prime + [placeholder]
 
-    scores = model(x=graph.x.to(device), edge_index=graph.edge_index.to(device),
-                   batch=torch.zeros(graph.num_nodes).long().to(device)).detach().cpu()
+    if task == Task.GRAPH_CLASSIFICATION or task == Task.NODE_CLASSIFICATION:
+        scores = model(x=graph.x.to(device), edge_index=graph.edge_index.to(device),
+                       batch=torch.zeros(graph.num_nodes).long().to(device)).detach().cpu()
+    else:
+        x1 = torch.tensor([nodes_to_keep[0]]).long().to(device)  # node 1 of edge
+        x2 = torch.tensor([nodes_to_keep[1]]).long().to(device)  # node 2 of edge
+        scores = model(x=graph.x.to(device), edge_index=graph.edge_index.to(device), x1=x1, x2=x2, ptr=None).detach().cpu()
+
     if len(scores.shape) > 1:
         scores = scores.squeeze()
 
     if task == Task.NODE_CLASSIFICATION:
-        scores = scores[index_of_interest]  # get score for target node
+        scores = scores[node_index]  # get score for target node
 
     predicted_class = torch.argmax(scores, dim=0).item()
 
@@ -90,17 +105,19 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
 
         include_mask = np.zeros(graph.num_nodes)
         include_mask[selected] = 1
-        include_mask[subgraph_list] = 1
+        include_mask[subgraph_list] = 1  # subgraph list already includes target nodes
         masked_x_include = graph.x * torch.tensor(include_mask).unsqueeze(1)  # zero padding
         include_data = Data(masked_x_include.float(), graph.edge_index)
         include_data_list.append(include_data)
 
         exclude_mask = np.zeros(graph.num_nodes)
         exclude_mask[selected] = 1
+        if task == Task.NODE_CLASSIFICATION or task == Task.LINK_PREDICTION:  # exclude target nodes from zero padding
+            exclude_mask[nodes_to_keep] = 1
         masked_x_exclude = graph.x * torch.tensor(exclude_mask).unsqueeze(1)  # zero padding
         exclude_data = Data(masked_x_exclude.float(), graph.edge_index)
         exclude_data_list.append(exclude_data)
 
     score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class, task,
-                                           index_of_interest)
+                                           nodes_to_keep)
     return score

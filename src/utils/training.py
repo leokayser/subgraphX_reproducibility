@@ -39,8 +39,26 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
             else:  # testing
                 mask = graph.test_mask
 
+        edge_list = None  # feature and targets for link prediction
+        y_list = None
+        if task == Task.LINK_PREDICTION:
+            if stage == Stage.TRAINING:
+                edge_list = graph.edge_list_train
+                y_list = graph.y_train
+            elif stage == Stage.VALIDATION:
+                edge_list = graph.edge_list_val
+                y_list = graph.y_val
+            else:  # testing
+                edge_list = graph.edge_list_test
+                y_list = graph.y_test
+
         # forward pass
-        scores = model(graph.x.to(device), graph.edge_index.to(device), graph.batch.to(device))
+        if task == Task.NODE_CLASSIFICATION or task == Task.GRAPH_CLASSIFICATION:
+            scores = model(graph.x.to(device), graph.edge_index.to(device), graph.batch.to(device))
+        else:  # link prediction
+            scores = model(graph.x.to(device), graph.edge_index.to(device), edge_list[0].to(device),
+                           edge_list[1].to(device))
+
         if single_output:
             scores = scores.squeeze()
 
@@ -49,7 +67,7 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
         elif task == Task.NODE_CLASSIFICATION:
             cur_loss = loss_func(scores[mask], graph.y.to(device)[mask])
         else:
-            raise NotImplementedError('link prediction training')
+            cur_loss = loss_func(scores, y_list.to(device))
 
         if stage == Stage.TRAINING:  # backward pass
             cur_loss.backward()
@@ -65,7 +83,7 @@ def _episode_helper(model: torch.nn.Module, single_output: bool, optimizer: Unio
         elif task == Task.NODE_CLASSIFICATION:
             cur_correct, cur_num_items = compute_accuracy(pred[mask], graph.y[mask])
         else:
-            raise NotImplementedError('link prediction training')
+            cur_correct, cur_num_items = compute_accuracy(pred, y_list)
 
         correct += cur_correct
         num_items += cur_num_items
@@ -161,3 +179,4 @@ def train_emb(model, optimizer, loader, num_epochs, output_freq: int = 1):
         if (i % output_freq) == 0:
             running_loss /= len(loader)
             print(f'Epoch: {i} \tloss: {running_loss}')
+

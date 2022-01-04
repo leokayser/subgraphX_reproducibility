@@ -362,19 +362,19 @@ def main():
     # print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
     # debug both explanation methods
-    # debug(model, test_loader)
+    debug(model, test_loader)
     # debug_2(model, test_loader)
 
     # collect_subgraphx_expl(model, test_loader)
     # collect_gnn_expl(model, test_loader)
 
-    sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
-    sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
-    sx_runtime = compute_avg_runtime(sx_dict)
+    # sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
+    # sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
+    # sx_runtime = compute_avg_runtime(sx_dict)
 
-    gnn_dict = load_data('./result_data/karate_club/ggn_exp_dict')
-    gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
-    gnn_runtime = compute_avg_runtime(gnn_dict)
+    # gnn_dict = load_data('./result_data/karate_club/ggn_exp_dict')
+    # gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
+    # gnn_runtime = compute_avg_runtime(gnn_dict)
 
     # plot graph
     # sparsity_list = [sx_sparsity, gnn_sparsity]

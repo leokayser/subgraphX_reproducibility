@@ -28,7 +28,7 @@ class MCTSNode:
         return set(range(self.graph.num_nodes)) - self.node_set
 
     def __str__(self) -> str:
-        return f'{sorted(list(self.get_pruned_nodes()))}: {self.score}'
+        return f'{sorted(list(self.node_set))}: {self.score}'
 
     def __eq__(self, node2) -> bool:
         return self.node_set == node2.node_set
@@ -80,11 +80,9 @@ class MCTS:
         else:
             if self.task == Task.GRAPH_CLASSIFICATION:
                 score = self.score_func(self.model, self.graph, mcts_node.node_set, self.t, self.num_layers)
-            elif self.task == Task.NODE_CLASSIFICATION:
+            else:  # node classification and link prediction need node indices
                 score = self.score_func(self.model, self.graph, mcts_node.node_set, self.t, self.num_layers,
-                                        task=self.task, index_of_interest=self.nodes_to_keep[0])
-            else:
-                raise NotImplementedError('link prediction')
+                                        task=self.task, nodes_to_keep=self.nodes_to_keep)
             self.R[mcts_node] = score
             mcts_node.score = score
             return score
@@ -144,7 +142,28 @@ class MCTS:
         for node in nodes_to_prune:
             subgraph = nx_graph.subgraph(mcts_node.node_set - {node})
             components = nx.connected_components(subgraph)
-            child_set = max(components, key=lambda x: len(x))  # only keep largest connected component
+
+            if self.task == Task.GRAPH_CLASSIFICATION:  # only keep largest connected component
+                child_set = max(components, key=lambda x: len(x))
+            elif self.task == Task.NODE_CLASSIFICATION:  # keep component with target node
+                node_to_keep = self.nodes_to_keep[0]
+                child_set = set()
+                for c in components:
+                    if node_to_keep in c:
+                        child_set = c
+                        break
+                if len(child_set) == 0:
+                    raise Exception('Target node not in children, which should never happen. You found a bug.')
+
+            else:  # Link prediction: keep two components which include both nodes
+                node1 = self.nodes_to_keep[0]
+                node2 = self.nodes_to_keep[1]
+                child_set = set()
+                for c in components:
+                    if node1 in c or node2 in c:
+                        child_set = child_set | c
+                if len(child_set) == 0:
+                    raise Exception('Target node not in children, which should never happen. You found a bug.')
 
             child = MCTSNode(self.graph, self.n_min, child_set)
             children.append(child)
