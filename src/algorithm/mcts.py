@@ -91,7 +91,7 @@ class MCTS:
         children = self.children[parent]
         counts = [self.C[n] for n in children]
         parent_count = sum(counts)
-        if parent_count == 0:
+        if parent_count == 0:  # for computational efficiency: all nodes unexplored
             return 0
         u = self.exp_weight * self._r(mcts_node) * math.sqrt(parent_count) / (1 + self.C[mcts_node])
         return u
@@ -128,7 +128,7 @@ class MCTS:
             raise Exception(f'terminal node cannot be expanded: {mcts_node}')
 
         children = []
-        nx_graph = to_networkx(self.graph, to_undirected=True)  # connected components only works for directed graphs
+        nx_graph = to_networkx(self.graph, to_undirected=True)  # connected components only works for undirected graphs
 
         # sort nodes according to pruning strategy and only consider first k nodes
         nodes_to_prune = list(mcts_node.node_set.copy())

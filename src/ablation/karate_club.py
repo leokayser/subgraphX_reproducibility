@@ -362,13 +362,14 @@ def main():
     # print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
     # debug both explanation methods
-    debug(model, test_loader)
+    # debug(model, test_loader)
     # debug_2(model, test_loader)
 
     # collect_subgraphx_expl(model, test_loader)
     # collect_gnn_expl(model, test_loader)
 
-    # sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
+    sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
+    pass
     # sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
     # sx_runtime = compute_avg_runtime(sx_dict)
 
