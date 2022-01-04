@@ -132,7 +132,7 @@ class MCTS:
 
         # sort nodes according to pruning strategy and only consider first k nodes
         nodes_to_prune = list(mcts_node.node_set.copy())
-        if self.task == Task.NODE_CLASSIFICATION:
+        if self.task == Task.NODE_CLASSIFICATION or self.task == Task.LINK_PREDICTION:
             nodes_to_prune = [n for n in nodes_to_prune if n not in self.nodes_to_keep]
 
         nodes_to_prune.sort(key=lambda x: nx_graph.degree(x), reverse=self.high2low)

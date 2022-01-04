@@ -272,7 +272,7 @@ def collect_subgraphx_expl(model, test_loader):
 
             sparsity_score = sparsity(test_graph, explanation_set)
             fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
-                                      index_of_interest=node)
+                                      nodes_to_keep=[node])
 
             result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
             res_dict[node] = res_dict[node] + [result_tuple]
@@ -320,7 +320,7 @@ def collect_gnn_expl(model, test_loader) -> Dict:
                                                           task=Task.NODE_CLASSIFICATION, node_to_explain=node)
             sparsity_score = sparsity(test_graph, explanation_set)
             fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
-                                      index_of_interest=node)
+                                      nodes_to_keep=[node])
 
             result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
             res_dict[node] = res_dict[node] + [result_tuple]
