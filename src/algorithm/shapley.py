@@ -112,8 +112,8 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
 
         exclude_mask = np.zeros(graph.num_nodes)
         exclude_mask[selected] = 1
-        # if task == Task.NODE_CLASSIFICATION or task == Task.LINK_PREDICTION:  # exclude target nodes from zero padding
-        #     exclude_mask[nodes_to_keep] = 1
+        if task == Task.NODE_CLASSIFICATION or task == Task.LINK_PREDICTION:  # exclude target nodes from zero padding
+            exclude_mask[nodes_to_keep] = 1
         masked_x_exclude = graph.x * torch.tensor(exclude_mask).unsqueeze(1)  # zero padding
         exclude_data = Data(masked_x_exclude.float(), graph.edge_index)
         exclude_data_list.append(exclude_data)

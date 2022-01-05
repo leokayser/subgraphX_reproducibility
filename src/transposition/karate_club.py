@@ -192,7 +192,7 @@ def debug(model, test_loader):
     sparsity_score = sparsity(test_graph, explanation_set)
     print(f'sparsity: {sparsity_score}')
 
-    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, index_of_interest=node)
+    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, nodes_to_keep=[node])
     print(f'fidelity: {fidelity_score}')
 
 
@@ -230,7 +230,7 @@ def debug_2(model, test_loader):
     sparsity_score = sparsity(test_graph, explanation_set)
     print(f'sparsity: {sparsity_score}')
 
-    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, index_of_interest=node)
+    fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION, nodes_to_keep=[node])
     print(f'fidelity: {fidelity_score}')
 
 """
@@ -248,7 +248,7 @@ def collect_subgraphx_expl(model, test_loader):
     test_mask = test_graph.test_mask
     test_node_idx = torch.arange(0, num_nodes)[test_mask].tolist()
 
-    path = './result_data/karate_club/subgraphx_dict'
+    path = './result_data/karate_club/subgraphx_new_dict2'
     if os.path.isfile(path):
         res_dict = load_data(path)
     else:
@@ -276,8 +276,8 @@ def collect_subgraphx_expl(model, test_loader):
 
             result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
             res_dict[node] = res_dict[node] + [result_tuple]
-        print(f'finished node {counter} of {len(test_node_idx)}')
-        counter += 1
+            print(f'finished node {counter} of {len(test_node_idx)}')
+            counter += 1
 
     # save_data(path, res_dict)
     return res_dict
@@ -348,9 +348,9 @@ def main():
         elif graph.y[node].item() == 3:
             color_map.append('yellow')
     nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
-    # nx.draw(nx_graph, node_color=color_map, with_labels=True)
-    # plt.savefig('./img/karate_club/graph.png')
-    # plt.show()
+    nx.draw(nx_graph, node_color=color_map, with_labels=True)
+    plt.savefig('./img/karate_club/graph.png')
+    plt.show()
 
     # first train embedding
     emb_model = train_or_load_embedding(graph)
@@ -358,8 +358,8 @@ def main():
 
     # then train gcn
     model, loss_func = train_or_load_gcn(train_loader, val_loader)
-    # test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
-    # print(f'test loss: {test_loss}, test_acc: {test_acc}')
+    test_loss, test_acc = test(model, False, test_loader, loss_func, task=Task.NODE_CLASSIFICATION)
+    print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
     # debug both explanation methods
     # debug(model, test_loader)
@@ -368,24 +368,24 @@ def main():
     # collect_subgraphx_expl(model, test_loader)
     # collect_gnn_expl(model, test_loader)
 
-    sx_dict = load_data('./result_data/karate_club/subgraphx_dict')
-    pass
-    # sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
-    # sx_runtime = compute_avg_runtime(sx_dict)
+    sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict')
+    sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
+    sx_runtime = compute_avg_runtime(sx_dict)
 
-    # gnn_dict = load_data('./result_data/karate_club/ggn_exp_dict')
-    # gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
-    # gnn_runtime = compute_avg_runtime(gnn_dict)
+    gnn_dict = load_data('./result_data/karate_club/ggn_exp_dict')
+    gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
+    gnn_runtime = compute_avg_runtime(gnn_dict)
 
     # plot graph
-    # sparsity_list = [sx_sparsity, gnn_sparsity]
-    # fidelity_list = [sx_fidelity, gnn_fidelity]
-    # labels = ['SubgraphX', 'GNN Explainer']
-    # plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/karate_club/karate_results.png')
+    sparsity_list = [sx_sparsity, gnn_sparsity]
+    fidelity_list = [sx_fidelity, gnn_fidelity]
+    labels = ['SubgraphX', 'GNN Explainer']
+    plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/karate_club/karate_results3.png')
 
     # save runtime to file
-    # data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}'
-    # save_str(path='./result_data/karate_club/runtime.txt', data=data_str)
+    data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}'
+    save_str(path='./result_data/karate_club/runtime.txt', data=data_str)
+    print(data_str)
 
 
 if __name__ == '__main__':
