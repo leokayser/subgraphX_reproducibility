@@ -16,11 +16,12 @@ from torch_geometric.utils import to_networkx, to_undirected
 from torch_geometric.data import Data
 
 from src.algorithm.subgraph_x import SubgraphX
-from src.utils.logging import load_data, save_data
+from src.utils.logging import load_data, save_data, aggregate_fidelity_sparsity, compute_avg_runtime, save_str
 from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
 from src.utils.utils import set_seed, get_device
+from src.utils.visualization import plot_results
 
 num_nodes = 8248
 embedding_dim = 128
@@ -125,7 +126,7 @@ class LinkPredictorModel(torch.nn.Module):
     def __init__(self):
         super(LinkPredictorModel, self).__init__()
         self.hidden_dim = 64
-        self.gcn1 = GCNConv(embedding_dim, self.hidden_dim, cached=True)
+        self.gcn1 = GCNConv(embedding_dim, self.hidden_dim, cached=False)
         # self.gcn2 = GCNConv(self.hidden_dim, self.hidden_dim, cached=True)
         # self.lin1 = torch.nn.Linear(2 * self.hidden_dim, self.hidden_dim)
         self.lin2 = torch.nn.Linear(2 * self.hidden_dim, 2)
@@ -151,38 +152,6 @@ class LinkPredictorModel(torch.nn.Module):
         # x = torch.nn.functional.relu(x)
         # x = self.lin2(x)
         return x
-
-# class LinkPredictorModel(torch.nn.Module):
-#     def __init__(self):
-#         super(LinkPredictorModel, self).__init__()
-#         self.hidden_dim = 64
-#         self.gcn1 = GCNConv(num_nodes, self.hidden_dim, cached=True)
-#         self.gcn2 = GCNConv(self.hidden_dim, self.hidden_dim, cached=True)
-#         # self.lin1 = torch.nn.Linear(2 * self.hidden_dim, self.hidden_dim)
-#         self.lin2 = torch.nn.Linear(2 * self.hidden_dim, 2)
-#
-#     def forward(self, x, edge_index, node1, node2, ptr: Optional[Tensor] = None):
-#         # x = torch.nn.functional.one_hot(x.long(), num_nodes).float()
-#         x = self.gcn1(x, edge_index)
-#         x = torch.nn.functional.relu(x)
-#         x = self.gcn2(x, edge_index)
-#         x = torch.nn.functional.relu(x)
-#
-#         if ptr is not None:
-#             idx_in_batch_1 = ptr[:-1] + node1
-#             idx_in_batch_2 = ptr[:-1] + node2
-#         else:
-#             idx_in_batch_1 = node1
-#             idx_in_batch_2 = node2
-#
-#         x1 = torch.index_select(x, dim=0, index=idx_in_batch_1)
-#         x2 = torch.index_select(x, dim=0, index=idx_in_batch_2)
-#         emb_concat = torch.cat((x1, x2), dim=1)
-#
-#         x = self.lin2(emb_concat)
-#         # x = torch.nn.functional.relu(x)
-#         # x = self.lin2(x)
-#         return x
 
 def train_or_load_link_pred(loader):
     device = get_device()
@@ -227,10 +196,10 @@ def collect_subgraphx_expl(model, graph, test_edge_list):
         for edge in test_edge_list:
             edge = tuple(edge)
             res_dict[edge] = []
-        save_data(path, res_dict)
+        # save_data(path, res_dict)
 
     # collect explanations for all nodes with a fixed n_min
-    subgraphx = SubgraphX(model, num_layers=1, exp_weight=5, m=1, t=50, task=Task.LINK_PREDICTION)
+    subgraphx = SubgraphX(model, num_layers=1, exp_weight=5, m=5, t=12, task=Task.LINK_PREDICTION)
 
     for n_min in [4, 6, 8, 10, 12]:
         counter = 1
@@ -249,9 +218,8 @@ def collect_subgraphx_expl(model, graph, test_edge_list):
 
             result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
             res_dict[edge_tuple] = res_dict[edge_tuple] + [result_tuple]
-            print('test')
-        print(f'finished node {counter} of {len(test_edge_list)}')
-        counter += 1
+            print(f'finished node {counter} of {len(test_edge_list)}')
+            counter += 1
 
     # save_data(path, res_dict)
     return res_dict
@@ -282,9 +250,9 @@ def main():
     predictor_model = train_or_load_link_pred(loader)
 
     # performance on test set
-    # loss_func = torch.nn.CrossEntropyLoss()
-    # loss, acc = test(predictor_model, False, loader, loss_func, task=Task.LINK_PREDICTION)
-    # print(f'Test loss: {loss}, test acc: {acc}')
+    loss_func = torch.nn.CrossEntropyLoss()
+    loss, acc = test(predictor_model, False, loader, loss_func, task=Task.LINK_PREDICTION)
+    print(f'Test loss: {loss}, test acc: {acc}')
 
     # add softmax to model
     model = Sequential(
@@ -295,16 +263,31 @@ def main():
     )
 
     # choose random instances to explain
-    num_explanations = 10
+    num_explanations = 5
     expl_idx = random.sample(list(np.arange(edge_list_test.shape[1])), k=num_explanations)
     explain_edges = torch.index_select(edge_list_test, dim=1, index=torch.tensor(expl_idx))
     explain_y = torch.index_select(y_test, dim=0, index=torch.tensor(expl_idx))
 
     # debug
-    debug(model, graph, explain_edges)
+    # debug(model, graph, explain_edges)
 
     # gather data
     # collect_subgraphx_expl(model, graph, explain_edges.T.detach().cpu().tolist())
+
+    # load dict
+    sx_dict = load_data('./result_data/ppi/subgraphx_dict')
+    sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
+    sx_runtime = compute_avg_runtime(sx_dict)
+
+    sparsity_list = [[4, 6, 8, 10, 12], [4, 6, 8, 10, 12], [4, 6, 8, 10, 12], [4, 6, 8, 10, 12], [4, 6, 8, 10, 12]]
+    fidelity_list = [sx_fidelity]
+    labels = ['SubgraphX']
+    plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/ppi/ppi_result2.png')
+
+    data_str = f'Subgraphx runtime avg: {sx_runtime}'
+    save_str(path='./result_data/ppi/runtime.txt', data=data_str)
+    print(data_str)
+
 
 
 if __name__ == '__main__':

@@ -39,8 +39,8 @@ def _aggregate_scores(loader, model, class_idx, task: Task = Task.GRAPH_CLASSIFI
 @torch.no_grad()
 def _compute_marginal_contribution(include_list, exclude_list, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
                                    nodes_to_keep: List[int] = None) -> float:
-    include_loader = DataLoader(include_list, batch_size=64, shuffle=False, num_workers=0)
-    exclude_loader = DataLoader(exclude_list, batch_size=64, shuffle=False, num_workers=0)
+    include_loader = DataLoader(include_list, batch_size=4, shuffle=False, num_workers=0)
+    exclude_loader = DataLoader(exclude_list, batch_size=4, shuffle=False, num_workers=0)
 
     include_scores = _aggregate_scores(include_loader, model, class_idx, task, nodes_to_keep)
     exclude_scores = _aggregate_scores(exclude_loader, model, class_idx, task, nodes_to_keep)
