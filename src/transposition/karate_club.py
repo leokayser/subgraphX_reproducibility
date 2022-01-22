@@ -89,7 +89,7 @@ def prepare_dataset(emb_model):
                     test_mask[node] = True
                 counter += 1
 
-    new_x = emb_model.forward(batch=np.arange(num_nodes)).cpu().detach()
+    new_x = emb_model.forward().data.cpu().detach()
 
     new_graph = Data(x=new_x, edge_index=graph.edge_index, y=y, train_mask=train_mask, val_mask=val_mask,
                      test_mask=test_mask)
