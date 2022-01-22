@@ -17,12 +17,22 @@ class MCTSNode:
         self.n_min = n_min
         self.node_set = node_set
         self.score = score  # just for debugging display
+        self._hash = self.compute_hash()
+
+    def compute_hash(self):
+        l = list(self.node_set)
+        l.sort()
+        result = 98767 - len(l) * 555
+        for i, el in enumerate(l):
+            result = result + (hash(el) % 9999999) * 1001 + i
+        return result
 
     def is_terminal(self) -> bool:
         return len(self.node_set) <= self.n_min
 
     def __hash__(self) -> int:
-        return hash(list(self.node_set).sort())
+        return self._hash
+        #return hash(list(self.node_set).sort())
 
     def get_pruned_nodes(self) -> Set[int]:  # inverse of node set
         return set(range(self.graph.num_nodes)) - self.node_set
@@ -31,7 +41,7 @@ class MCTSNode:
         return f'{sorted(list(self.node_set))}: {self.score}'
 
     def __eq__(self, node2) -> bool:
-        return self.node_set == node2.node_set
+        return hash(self) == hash(node2) and self.node_set == node2.node_set
 
 
 class MCTS:
@@ -89,8 +99,11 @@ class MCTS:
 
     def _u(self, mcts_node, parent) -> float:  # utility from paper
         children = self.children[parent]
-        counts = [self.C[n] for n in children]
-        parent_count = sum(counts)
+        parent_count = 0
+        for c in children:
+            parent_count += self.C[c]
+        #counts = [self.C[n] for n in children]
+        #parent_count = sum(counts)
         if parent_count == 0:  # for computational efficiency: all nodes unexplored
             return 0
         u = self.exp_weight * self._r(mcts_node) * math.sqrt(parent_count) / (1 + self.C[mcts_node])
