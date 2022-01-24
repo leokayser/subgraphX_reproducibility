@@ -1,13 +1,17 @@
 import os
 import random
 import time
+from collections import defaultdict
 from typing import Dict
 
 import networkx as nx
+from matplotlib import pyplot as plt
+import pydot
+from networkx.drawing.nx_pydot import graphviz_layout
+
 import numpy as np
 import torch
 import torch_geometric.datasets
-from matplotlib import pyplot as plt
 from torch import optim
 from torch.nn import ReLU, Linear, Softmax
 from torch.optim import Adam
@@ -330,6 +334,58 @@ def collect_gnn_expl(model, test_loader) -> Dict:
     # save_data(path, res_dict)
     return res_dict
 
+def explain_one(model, test_loader, node, load=True):
+    path = f'./result_data/karate_club/search_tree_{node}'
+
+    if not load:
+        device = get_device()
+
+        # nodes of test set
+        test_graph = next(iter(test_loader))
+
+        # collect explanations for all nodes with a fixed n_min
+        subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=30, t=50, task=Task.NODE_CLASSIFICATION)
+        n_min = 4
+
+        start_time = time.time()
+        explanation_set, mcts = subgraphx(test_graph, n_min=n_min, nodes_to_keep=[node])
+        end_time = time.time()
+        duration = end_time - start_time
+
+        search_tree = mcts.search_tree_representation()
+        save_data(path, search_tree)
+
+        sparsity_score = sparsity(test_graph, explanation_set)
+        fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
+                                          nodes_to_keep=[node])
+
+        result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
+    else:
+        search_tree = load_data(path)
+        result_tuple = None
+
+    labels = nx.get_node_attributes(search_tree, 'score')
+    labels = {n:round(s, ndigits=2) for n,s in labels.items()}
+
+    def get_color(n):
+        color_map = {0: 'black', 1: 'blue', 2: 'green', 3: 'yellow'}
+        if n in color_map:
+            return color_map[n]
+        else:
+            return 'red'
+    colors = nx.get_node_attributes(search_tree, 'visits')
+    colors = {n:get_color(s) for n,s in colors.items()}
+    colors = [c for n,c in sorted(colors.items())]
+
+    pos = graphviz_layout(search_tree, prog="dot")
+    fig, ax = plt.subplots(dpi=200)
+    nx.draw(search_tree, pos, ax=ax,node_size=50,font_size=4, labels=labels, node_color=colors)
+    fig.savefig(f'./img/karate_club/search_tree_{node}.png')
+    #plt.close(fig)
+    plt.show()
+
+    return result_tuple
+
 
 def main():
     dataset = torch_geometric.datasets.KarateClub()
@@ -337,20 +393,20 @@ def main():
     device = get_device()
 
     # print graph
-    color_map = []
-    for node in range(num_nodes):
-        if graph.y[node].item() == 0:
-            color_map.append('red')
-        elif graph.y[node].item() == 1:
-            color_map.append('blue')
-        elif graph.y[node].item() == 2:
-            color_map.append('green')
-        elif graph.y[node].item() == 3:
-            color_map.append('yellow')
-    nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
-    nx.draw(nx_graph, node_color=color_map, with_labels=True)
-    plt.savefig('./img/karate_club/graph.png')
-    plt.show()
+    # color_map = []
+    # for node in range(num_nodes):
+    #     if graph.y[node].item() == 0:
+    #         color_map.append('red')
+    #     elif graph.y[node].item() == 1:
+    #         color_map.append('blue')
+    #     elif graph.y[node].item() == 2:
+    #         color_map.append('green')
+    #     elif graph.y[node].item() == 3:
+    #         color_map.append('yellow')
+    # nx_graph = torch_geometric.utils.to_networkx(graph, to_undirected=True)
+    # nx.draw(nx_graph, node_color=color_map, with_labels=True)
+    # plt.savefig('./img/karate_club/graph.png')
+    # plt.show()
 
     # first train embedding
     emb_model = train_or_load_embedding(graph)
@@ -364,11 +420,14 @@ def main():
     # debug both explanation methods
     # debug(model, test_loader)
     # debug_2(model, test_loader)
+    result = explain_one(model=model, test_loader=test_loader, node=1)
+    print(result)
+    return
 
     # collect_subgraphx_expl(model, test_loader)
     # collect_gnn_expl(model, test_loader)
 
-    sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict')
+    # sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict')
     sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
     sx_runtime = compute_avg_runtime(sx_dict)
 

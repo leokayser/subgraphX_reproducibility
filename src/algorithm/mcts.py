@@ -78,6 +78,8 @@ class MCTS:
             self.root = MCTSNode(graph, n_min, set(node_tensor.tolist()))
             self.root.score = self._r(self.root)
 
+        self.paths = []  # for visualization only
+
     def _q(self, mcts_node) -> float:
         if self.C[mcts_node] == 0:
             return 0  # avoid unseen moves
@@ -197,6 +199,7 @@ class MCTS:
         if leaf not in self.leaves:
             self.leaves.append(leaf)
         self._backpropagate(path)
+        self.paths.append(path)  # for later visualization
 
     def best_leaf_node(self) -> MCTSNode:  # choose best leaf by reward only
         return max(self.leaves, key=self._r)
@@ -218,3 +221,24 @@ class MCTS:
         for mcts_node in self.W.keys():
             print(f'{i}: {mcts_node.info()}')
             i += 1
+
+    def search_tree_representation(self):
+        def count_up():
+            count_up.counter = getattr(count_up, 'counter', 0) + 1
+            return count_up.counter - 1
+        mcts_node_to_id = defaultdict(count_up)
+
+        edgelist = []
+        for path in self.paths:
+            for i in range(len(path)-1):
+                edgelist.append((mcts_node_to_id[path[i]], mcts_node_to_id[path[i+1]]))
+        search_tree = nx.DiGraph(edgelist)
+
+        node_scores = {mcts_node_to_id[mcts_node] : score for mcts_node, score in self.R.items()}
+        nx.set_node_attributes(search_tree, values=node_scores, name="score")
+
+        node_visits = {mcts_node_to_id[mcts_node] : visits for mcts_node, visits in self.C.items()}
+        nx.set_node_attributes(search_tree, values=node_visits, name="visits")
+
+        return search_tree
+
