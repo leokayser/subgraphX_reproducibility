@@ -17,6 +17,7 @@ from src.algorithm.subgraph_x import SubgraphX
 from src.utils.metrics import sparsity, fidelity
 from src.utils.training import train_model, test
 from src.utils.utils import get_device, set_seed, get_predicted_class
+from src.utils.visualization import plot_search_tree
 
 
 def download_and_prepare_datset() -> SynGraphDataset:
@@ -190,6 +191,11 @@ def main():
     print(f'predicted: {predicted_class}')
 
     explanation_set, mcts = subgraphx(graph, n_min=10)
+
+    search_tree = mcts.search_tree_to_networkx()
+    name = f'search_tree_51_10'
+    plot_search_tree(search_tree, f'./img/ba_2motifs/{name}.png')
+
     pruned_nodes = set(range(graph.num_nodes)) - explanation_set
     print(f'pruned: {pruned_nodes}')
     print(f'explanation: {explanation_set}')

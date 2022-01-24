@@ -222,7 +222,7 @@ class MCTS:
             print(f'{i}: {mcts_node.info()}')
             i += 1
 
-    def search_tree_representation(self):
+    def search_tree_to_networkx(self):
         def count_up():
             count_up.counter = getattr(count_up, 'counter', 0) + 1
             return count_up.counter - 1

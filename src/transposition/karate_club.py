@@ -6,8 +6,6 @@ from typing import Dict
 
 import networkx as nx
 from matplotlib import pyplot as plt
-import pydot
-from networkx.drawing.nx_pydot import graphviz_layout
 
 import numpy as np
 import torch
@@ -25,7 +23,7 @@ from src.utils.metrics import sparsity, fidelity
 from src.utils.task_enum import Task
 from src.utils.training import train_emb, train_model, test
 from src.utils.utils import get_device, set_seed, convert_edge_mask_to_subset
-from src.utils.visualization import plot_results
+from src.utils.visualization import plot_results, plot_search_tree
 
 batch_size = 1  # there is only a single graph in the dataset
 num_classes = 4
@@ -334,7 +332,8 @@ def collect_gnn_expl(model, test_loader) -> Dict:
     # save_data(path, res_dict)
     return res_dict
 
-def explain_one(model, test_loader, node, load=True):
+def explain_one(model, test_loader, node, load=False):
+    name = f'search_tree_{node}'
     path = f'./result_data/karate_club/search_tree_{node}'
 
     if not load:
@@ -352,8 +351,8 @@ def explain_one(model, test_loader, node, load=True):
         end_time = time.time()
         duration = end_time - start_time
 
-        search_tree = mcts.search_tree_representation()
-        save_data(path, search_tree)
+        search_tree = mcts.search_tree_to_networkx()
+        save_data(f'./result_data/karate_club/{name}', search_tree)
 
         sparsity_score = sparsity(test_graph, explanation_set)
         fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
@@ -361,28 +360,10 @@ def explain_one(model, test_loader, node, load=True):
 
         result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
     else:
-        search_tree = load_data(path)
+        search_tree = load_data(f'./result_data/karate_club/{name}')
         result_tuple = None
 
-    labels = nx.get_node_attributes(search_tree, 'score')
-    labels = {n:round(s, ndigits=2) for n,s in labels.items()}
-
-    def get_color(n):
-        color_map = {0: 'black', 1: 'blue', 2: 'green', 3: 'yellow'}
-        if n in color_map:
-            return color_map[n]
-        else:
-            return 'red'
-    colors = nx.get_node_attributes(search_tree, 'visits')
-    colors = {n:get_color(s) for n,s in colors.items()}
-    colors = [c for n,c in sorted(colors.items())]
-
-    pos = graphviz_layout(search_tree, prog="dot")
-    fig, ax = plt.subplots(dpi=200)
-    nx.draw(search_tree, pos, ax=ax,node_size=50,font_size=4, labels=labels, node_color=colors)
-    fig.savefig(f'./img/karate_club/search_tree_{node}.png')
-    #plt.close(fig)
-    plt.show()
+    plot_search_tree(search_tree, f'./img/karate_club/{name}.png')
 
     return result_tuple
 
@@ -420,7 +401,7 @@ def main():
     # debug both explanation methods
     # debug(model, test_loader)
     # debug_2(model, test_loader)
-    result = explain_one(model=model, test_loader=test_loader, node=1)
+    result = explain_one(model=model, test_loader=test_loader, node=12)
     print(result)
     return
 
