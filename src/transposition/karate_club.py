@@ -242,7 +242,7 @@ For every node in the test set multiple data points are collected. Each point co
 (3) fidelity
 (4) time to compute explanation (seconds)
 """
-def collect_subgraphx_expl(model, test_loader):
+def collect_subgraphx_expl(model, test_loader, only_one_mcts = False):
     device = get_device()
 
     # nodes of test set
@@ -250,7 +250,9 @@ def collect_subgraphx_expl(model, test_loader):
     test_mask = test_graph.test_mask
     test_node_idx = torch.arange(0, num_nodes)[test_mask].tolist()
 
-    path = './result_data/karate_club/subgraphx_new_dict2'
+    path = './result_data/karate_club/subgraphx_new_dict3'
+    if only_one_mcts:
+        path = f'{path}_once'
     if os.path.isfile(path):
         res_dict = load_data(path)
     else:
@@ -262,26 +264,42 @@ def collect_subgraphx_expl(model, test_loader):
     # collect explanations for all nodes with a fixed n_min
     subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=30, t=50, task=Task.NODE_CLASSIFICATION)
 
-    for n_min in [4, 5, 6, 7, 8, 9, 10, 11, 12]:
-        counter = 1
-        print(f'\nstarting {n_min}')
-        for node in test_node_idx:
-            start_time = time.time()
-            explanation_set, _ = subgraphx(test_graph, n_min=n_min, nodes_to_keep=[node])
+    def record_data(node, explanation, duration):
+        sparsity_score = sparsity(test_graph, explanation_set)
+        fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
+                                  nodes_to_keep=[node])
 
+        result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
+        print(result_tuple)
+        res_dict[node] = res_dict[node] + [result_tuple]
+
+    n_mins = [4, 5, 6, 7, 8, 9, 10, 11, 12]
+    if not only_one_mcts:
+        for n_min in n_mins:
+            counter = 1
+            print(f'\nstarting {n_min}')
+            for node in test_node_idx:
+                start_time = time.time()
+                explanation_set, _ = subgraphx(test_graph, n_min=n_min, nodes_to_keep=[node], exhaustive=False)
+                end_time = time.time()
+                duration = end_time - start_time
+
+                record_data(node, explanation_set, duration)
+                print(f'finished node {counter} of {len(test_node_idx)}')
+                counter += 1
+    else:
+        for node in test_node_idx:
+            print(f'starting node {node}')
+            start_time = time.time()
+            _, mcts = subgraphx(test_graph, n_min=n_mins[0], nodes_to_keep=[node], exhaustive=True)
             end_time = time.time()
             duration = end_time - start_time
 
-            sparsity_score = sparsity(test_graph, explanation_set)
-            fidelity_score = fidelity(test_graph, explanation_set, model, task=Task.NODE_CLASSIFICATION,
-                                      nodes_to_keep=[node])
+            for n_min in n_mins:
+                explanation_set = mcts.best_node(n_min).node_set
+                record_data(node, explanation_set, duration)
 
-            result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
-            res_dict[node] = res_dict[node] + [result_tuple]
-            print(f'finished node {counter} of {len(test_node_idx)}')
-            counter += 1
-
-    # save_data(path, res_dict)
+    save_data(path, res_dict)
     return res_dict
 
 
@@ -334,7 +352,6 @@ def collect_gnn_expl(model, test_loader) -> Dict:
 
 def explain_one(model, test_loader, node, load=False):
     name = f'search_tree_{node}'
-    path = f'./result_data/karate_club/search_tree_{node}'
 
     if not load:
         device = get_device()
@@ -343,7 +360,7 @@ def explain_one(model, test_loader, node, load=False):
         test_graph = next(iter(test_loader))
 
         # collect explanations for all nodes with a fixed n_min
-        subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=30, t=50, task=Task.NODE_CLASSIFICATION)
+        subgraphx = SubgraphX(model, num_layers=2, exp_weight=5, m=20, t=20, task=Task.NODE_CLASSIFICATION)
         n_min = 4
 
         start_time = time.time()
@@ -401,14 +418,14 @@ def main():
     # debug both explanation methods
     # debug(model, test_loader)
     # debug_2(model, test_loader)
-    result = explain_one(model=model, test_loader=test_loader, node=12)
-    print(result)
-    return
+    # result = explain_one(model=model, test_loader=test_loader, node=12)
+    # print(result)
+    # return
 
-    # collect_subgraphx_expl(model, test_loader)
+    collect_subgraphx_expl(model, test_loader, only_one_mcts=True)
     # collect_gnn_expl(model, test_loader)
 
-    # sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict')
+    sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict2')
     sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
     sx_runtime = compute_avg_runtime(sx_dict)
 
@@ -416,14 +433,18 @@ def main():
     gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
     gnn_runtime = compute_avg_runtime(gnn_dict)
 
+    sx_once_dict = load_data('./result_data/karate_club/subgraphx_new_dict3_once')
+    sx_once_sparsity, sx_once_fidelity = aggregate_fidelity_sparsity(sx_once_dict)
+    sx_once_runtime = compute_avg_runtime(sx_once_dict)
+
     # plot graph
-    sparsity_list = [sx_sparsity, gnn_sparsity]
-    fidelity_list = [sx_fidelity, gnn_fidelity]
-    labels = ['SubgraphX', 'GNN Explainer']
-    plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/karate_club/karate_results3.png')
+    sparsity_list = [sx_sparsity, gnn_sparsity, sx_once_sparsity]
+    fidelity_list = [sx_fidelity, gnn_fidelity, sx_once_fidelity]
+    labels = ['SubgraphX', 'GNN Explainer', 'SubgraphX_N4']
+    plot_results(sparsity_list, fidelity_list, labels, save_dst='./img/karate_club/karate_results_once_3.png')
 
     # save runtime to file
-    data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}'
+    data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}\nSubgraphX_N4: {sx_once_runtime}'
     save_str(path='./result_data/karate_club/runtime.txt', data=data_str)
     print(data_str)
 

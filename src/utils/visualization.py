@@ -34,9 +34,17 @@ def plot_search_tree(search_tree: nx.DiGraph, save_dst: str = None):
     colors = {n: get_color(s) for n, s in colors.items()}
     colors = [c for n, c in sorted(colors.items())]
 
+    best = nx.get_node_attributes(search_tree, 'best')
+    borders = colors.copy()
+    for n, is_best in best.items():
+        if is_best:
+            borders[n] = 'red'
+
     pos = graphviz_layout(search_tree, prog="dot")
     fig, ax = plt.subplots(dpi=200)
-    nx.draw(search_tree, pos, ax=ax, node_size=50, font_size=4, labels=labels, node_color=colors)
+    nx.draw(search_tree, pos, ax=ax, node_size=50, font_size=4, labels=labels, node_color=colors,
+            edgecolors=borders)
+            #linewidths=borders, edgecolors=borders)
 
     if save_dst is not None:
         fig.savefig(save_dst)

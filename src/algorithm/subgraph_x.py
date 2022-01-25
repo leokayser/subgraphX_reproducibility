@@ -35,21 +35,23 @@ class SubgraphX:
 
         self.task = task
 
-    def _get_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int]):
+    def _get_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int], exhaustive: bool):
         return MCTS(graph, self.exp_weight, n_min, self.value_func, self.model, self.t,
-                    self.num_layers, self.high2low, self.max_children, self.task, nodes_to_keep)
+                    self.num_layers, self.high2low, self.max_children, self.task, nodes_to_keep,
+                    skip_to_leaves=(not exhaustive))
 
-    def __call__(self, graph: Data, n_min: int, nodes_to_keep: List[int] = None):
+    def __call__(self, graph: Data, n_min: int, nodes_to_keep: List[int] = None, exhaustive: bool = False):
         """
         Obtain explanation for a single instance
         :param graph: The graph to explain
         :param n_min: Maximum number of nodes in the explanation (upper bound, may not be exact)
         :param nodes_to_keep: Task dependent important nodes: None for graph classification, for node classification
         should be index of node. For link prediction both adjacent nodes to edge to explain.
+        :param exhaustive: If exhaustive search is enabled, explanations of different sizes may be requested from mcts.
         :return: Set of nodes explaining the prediction of the model on the given instance
         """
         nodes_to_keep = nodes_to_keep if nodes_to_keep is not None else []
-        mcts = self._get_mcts(graph, n_min, nodes_to_keep)
+        mcts = self._get_mcts(graph, n_min, nodes_to_keep, exhaustive)
 
         for iteration in range(self.m):
             mcts.search_one_iteration()

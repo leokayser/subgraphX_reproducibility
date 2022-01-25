@@ -47,7 +47,8 @@ class MCTSNode:
 class MCTS:
     def __init__(self, graph: Data, exp_weight: float, n_min: int, score_func: Callable, model: torch.nn.Module,
                  t: int, num_layers: int, high2low: bool = False, max_children: int = -1,
-                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None):
+                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None,
+                 skip_to_leaves: bool = True):
         self.W = defaultdict(float)  # total reward of each node
         self.C = defaultdict(int)  # total visit count for each node
         self.children: Dict[MCTSNode, List[MCTSNode]] = {}  # nodes and their children
@@ -64,6 +65,7 @@ class MCTS:
 
         self.high2low = high2low
         self.max_children = max_children  # negative number means consider all nodes
+        self.skip_to_leaves = skip_to_leaves  # hastens computation, but only offers explanations of size n_min
 
         self.nodes_to_keep = nodes_to_keep if nodes_to_keep is not None else []
         self.task = task
@@ -106,7 +108,7 @@ class MCTS:
             parent_count += self.C[c]
         #counts = [self.C[n] for n in children]
         #parent_count = sum(counts)
-        if parent_count == 0:  # for computational efficiency: all nodes unexplored
+        if parent_count == 0 and self.skip_to_leaves:  # for computational efficiency: all nodes unexplored
             return 0
         u = self.exp_weight * self._r(mcts_node) * math.sqrt(parent_count) / (1 + self.C[mcts_node])
         return u
@@ -204,6 +206,21 @@ class MCTS:
     def best_leaf_node(self) -> MCTSNode:  # choose best leaf by reward only
         return max(self.leaves, key=self._r)
 
+    def best_node(self, size: int) -> MCTSNode:
+        if self.skip_to_leaves and size != self.n_min:
+            print('Warning: Some scores were skipped in the exploration phase. Set skip_to_leaves to False!')
+
+        if size >= len(self.root.node_set):
+            print('Warning: The requested explanation-set is too large.')
+            return self.root
+
+        candidates = [k for k in self.R.keys() if len(k.node_set) == size]
+
+        if candidates:
+            return max(candidates, key=self._r)
+        else:
+            return None
+
     def _node_info(self, mcts_node) -> str:
         pruned_nodes = list(mcts_node.get_pruned_nodes())
         pruned_nodes.sort()
@@ -239,6 +256,13 @@ class MCTS:
 
         node_visits = {mcts_node_to_id[mcts_node] : visits for mcts_node, visits in self.C.items()}
         nx.set_node_attributes(search_tree, values=node_visits, name="visits")
+
+        node_best = {}
+        for n in range(self.n_min, len(self.root.node_set)):
+            best = self.best_node(n)
+            if best:
+                node_best[mcts_node_to_id[best]] = True
+        nx.set_node_attributes(search_tree, values=node_best, name="best")
 
         return search_tree
 
