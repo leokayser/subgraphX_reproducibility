@@ -113,11 +113,11 @@ def get_embedding_model(graph):
     loader = model.loader(num_workers=0, batch_size=64, shuffle=True)
     return model, loader
 
-def train_or_load_embedding(graph):
+def train_or_load_embedding(graph, only_load=False):
     save_path = './checkpoints/karate_club/emb'
     emb_model, emb_loader = get_embedding_model(graph)
 
-    if os.path.isfile(save_path):  # if checkpoint exists, load it
+    if only_load or os.path.isfile(save_path):  # if checkpoint exists, load it
         emb_model.load_state_dict(torch.load(save_path))
     else:
         emb_optimizer = Adam(emb_model.parameters())
@@ -143,13 +143,13 @@ def get_gcn_model():
 
     return model
 
-def train_or_load_gcn(train_loader, val_loader):
+def train_or_load_gcn(train_loader, val_loader, only_load=False):
     save_path = './checkpoints/karate_club/gcn.pt'
     model = get_gcn_model()
     loss_func = torch.nn.CrossEntropyLoss()
     device = get_device()
 
-    if os.path.isfile(save_path):
+    if only_load or os.path.isfile(save_path):
         model.load_state_dict(torch.load(save_path))
     else:
         optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -299,7 +299,7 @@ def collect_subgraphx_expl(model, test_loader, only_one_mcts = False):
                 explanation_set = mcts.best_node(n_min).node_set
                 record_data(node, explanation_set, duration)
 
-    save_data(path, res_dict)
+    # save_data(path, res_dict)
     return res_dict
 
 
@@ -418,11 +418,11 @@ def main():
     # debug both explanation methods
     # debug(model, test_loader)
     # debug_2(model, test_loader)
-    # result = explain_one(model=model, test_loader=test_loader, node=12)
-    # print(result)
-    # return
+    result = explain_one(model=model, test_loader=test_loader, node=12)
+    print(result)
+    return
 
-    collect_subgraphx_expl(model, test_loader, only_one_mcts=True)
+    # collect_subgraphx_expl(model, test_loader, only_one_mcts=True)
     # collect_gnn_expl(model, test_loader)
 
     sx_dict = load_data('./result_data/karate_club/subgraphx_new_dict2')

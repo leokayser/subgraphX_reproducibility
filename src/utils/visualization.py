@@ -46,7 +46,7 @@ def plot_search_tree(search_tree: nx.DiGraph, save_dst: str = None):
             edgecolors=borders)
             #linewidths=borders, edgecolors=borders)
 
-    if save_dst is not None:
+    if save_dst:
         fig.savefig(save_dst)
 
     plt.show()

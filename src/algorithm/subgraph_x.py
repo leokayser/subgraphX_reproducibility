@@ -5,7 +5,7 @@ from torch_geometric.data import Data
 
 from src.algorithm.mcts import MCTS
 from src.algorithm.shapley import mc_l_shapley
-from src.utils.task_enum import Task
+from src.utils.task_enum import Task, Experiment
 
 
 class SubgraphX:
@@ -35,7 +35,8 @@ class SubgraphX:
 
         self.task = task
 
-    def _get_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int], exhaustive: bool):
+    def _get_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int],
+                  exhaustive: bool, experiment: Experiment = None):
         return MCTS(graph, self.exp_weight, n_min, self.value_func, self.model, self.t,
                     self.num_layers, self.high2low, self.max_children, self.task, nodes_to_keep,
                     skip_to_leaves=(not exhaustive))
@@ -59,3 +60,8 @@ class SubgraphX:
         explanation = mcts.best_leaf_node()
 
         return explanation.node_set, mcts
+
+    def generate_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int],
+                      exhaustive: bool, experiment: Experiment = None):
+        """ Returns mcts object for in-depth experiments """
+        mcts = self._get_mcts(graph, n_min, nodes_to_keep, exhaustive, experiment)
