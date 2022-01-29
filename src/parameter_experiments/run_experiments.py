@@ -128,16 +128,16 @@ def main():
 
     # experiments with 20 iterations of mcts (same as in the paper)
     sx_params = get_sx_params(model, t=100)
-    run_experiment('paper', exp_params, sx_params, graph_loader)
+    run_experiment('m20t100', exp_params, sx_params, graph_loader)
 
     sx_params = get_sx_params(model, t=20)
-    run_experiment('t20', exp_params, sx_params, graph_loader)
+    run_experiment('m20t20', exp_params, sx_params, graph_loader)
 
     sx_params = get_sx_params(model, t=5)
-    run_experiment('t5', exp_params, sx_params, graph_loader)
+    run_experiment('m20t5', exp_params, sx_params, graph_loader)
 
     sx_params = get_sx_params(model, value_func=fidelity_wrapper)
-    run_experiment('score_fidelity', exp_params, sx_params, graph_loader)
+    run_experiment('m20_score_fidelity', exp_params, sx_params, graph_loader)
 
     sx_params = get_sx_params(model, experiment=Experiment.GREEDY, t=100, max_children=-1)
     run_experiment('greedy_shapley', exp_params, sx_params, graph_loader)
@@ -148,7 +148,7 @@ def main():
     # experiments with custom iteration counts
     exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10, 15, 20, 50, 100, 200, 500, 1000])
     sx_params = get_sx_params(model, value_func=fidelity_wrapper, experiment=Experiment.RANDOM, max_children=-1)
-    run_experiment('random_m1000', exp_params, sx_params, graph_loader)
+    run_experiment('m1000_random', exp_params, sx_params, graph_loader)
 
     exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1])
     sx_params = get_sx_params(model, value_func=fidelity_wrapper, experiment=Experiment.GREEDY, max_children=-1)
@@ -156,7 +156,7 @@ def main():
 
     exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10, 15, 20, 25, 30])
     sx_params = get_sx_params(model, t=50, max_children=-1)
-    run_experiment('yannik', exp_params, sx_params, graph_loader)
+    run_experiment('m30t50', exp_params, sx_params, graph_loader)
 
 
 if __name__ == '__main__':

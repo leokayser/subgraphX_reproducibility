@@ -9,6 +9,7 @@ import pprint
 
 import networkx as nx
 from matplotlib import pyplot as plt
+plt.rcParams['figure.dpi'] = 200
 
 import numpy as np
 import torch
@@ -31,11 +32,11 @@ import src.transposition.karate_club as karate_club
 from src.parameter_experiments.parameters import SubgraphXSnapshot
 
 
-def plot_experiment(ax, data, nodes, iterations, n_mins, label, n, m, n_min):
+def plot_experiment(ax, data, nodes, iterations, n_mins, label, n, m, n_min, times=None):
     data = np.array(data)  # shape (nodes, iterations, n_mins)
 
     def is_axis(a):
-        return a == 'x' or a == 'y'
+        return isinstance(a, str)  # and (a[0] == 'x' or a[0] == 'y'))
 
     if n is None:
         data = np.mean(data, axis=0, keepdims=True)
@@ -48,7 +49,10 @@ def plot_experiment(ax, data, nodes, iterations, n_mins, label, n, m, n_min):
     if m is None:
         raise Exception("Averaging along iterations is a bad idea.")
     elif is_axis(m):
-        x = iterations
+        if 'times' in m:
+            x = 'times'
+        else:
+            x = iterations
     else:
         m_idx = iterations.index(m)
         data = data[:, [m_idx], :]
@@ -56,15 +60,20 @@ def plot_experiment(ax, data, nodes, iterations, n_mins, label, n, m, n_min):
     if n_min is None:
         data = np.mean(data, axis=2, keepdims=True)
     elif is_axis(n_min):
-        x = 'sparsity'
+        if 'sparsity' in n_min:
+            x = 'sparsity'
+        else:
+            x = n_mins
     else:
         n_min_idx = n_mins.index(n_min)
         data = data[:, :, [n_min_idx]]
 
-    data = np.squeeze(data)  # down to [ (fid, spar), (fid, spar), ... ]
+    data = np.reshape(data, (-1, 3))  # down to [ (fid, spar, time), (fid, spar, time), ... ]
 
     if x == 'sparsity':
         x = data[:, 1]
+    elif x == 'times':
+        x = data[:, 2]
 
     y = data[:, 0]  # down to [ fid, fid, fid, ... ]
     if len(y.shape) > 1:
@@ -87,8 +96,9 @@ def reconstruct_experiment(path = None, snapshots = None):
     nodes = sorted(list(snapshots.keys()))
     iterations_nos = sorted(list(snapshots[nodes[0]].keys()))
     n_mins = [len(t[0]) for t in snapshots[nodes[0]][iterations_nos[0]].explanations]
+    #times = [[snapshots[nodes[n]][i].timestamp for i in iterations_nos] for n in nodes]
 
-    data = [[[[t[2], t[1]] for t in snapshots[n][i].explanations] for i in iterations_nos] for n in nodes]
+    data = [[[[t[2], t[1], snapshots[n][i].timestamp] for t in snapshots[n][i].explanations] for i in iterations_nos] for n in nodes]
     data = np.array(data)
 
     return data, nodes, iterations_nos, n_mins
@@ -128,7 +138,7 @@ def display_one_experiment(path):
         plt.show()
 
 
-def compare_final_fidelity(paths: List[str], labels: List[str] = None, node: int = None):
+def compare_final_fidelity(paths: List[str], labels: List[str] = None, node: int = None, save_dst: str = None):
     if labels is None:
         labels = [os.path.basename(p) for p in paths]
 
@@ -137,15 +147,41 @@ def compare_final_fidelity(paths: List[str], labels: List[str] = None, node: int
         snapshots = load_data(path)
         data, nodes, iterations_nos, n_mins = reconstruct_experiment(snapshots=snapshots)
         plot_experiment(ax, data, nodes, iterations_nos, n_mins, label=label,
-                        n=node, m=iterations_nos[-1], n_min='x')
+                        n=node, m=iterations_nos[-1], n_min='x_sparsity')
     ax.legend()
     if node is None:
-        ax.set_title('Over all testing nodes')
+        ax.set_title('Average over all testing nodes')
     else:
         ax.set_title(f'Explanation for node {node}')
     ax.set_xlabel('Sparsity')
     ax.set_ylabel('Fidelity')
+
+    if save_dst is not None:
+        plt.savefig(save_dst)
     plt.show()
+
+def compare_fidelity_over_time(paths: List[str], labels: List[str] = None, node: int = None, save_dst: str = None):
+    if labels is None:
+        labels = [os.path.basename(p) for p in paths]
+
+    fig, ax = plt.subplots()
+    for path, label in zip(paths, labels):
+        snapshots = load_data(path)
+        data, nodes, iterations_nos, n_mins = reconstruct_experiment(snapshots=snapshots)
+        plot_experiment(ax, data, nodes, iterations_nos, n_mins, label=label,
+                        n=node, m='x_times', n_min=None)
+    ax.legend()
+    if node is None:
+        ax.set_title('Average over all testing nodes')
+    else:
+        ax.set_title(f'Explanation for node {node}')
+    ax.set_xlabel('Time [seconds per node]')
+    ax.set_ylabel('Fidelity')
+
+    if save_dst is not None:
+        plt.savefig(save_dst)
+    plt.show()
+
 
 def compare_per_node(paths: List[str], labels: List[str] = None):
     snapshots = load_data(paths[0])
@@ -158,15 +194,17 @@ def compare_per_node(paths: List[str], labels: List[str] = None):
 def main():
     base_dir = './result_data/karate_club/experiments'
 
-    # display_one_experiment(os.path.join(base_dir, 'greedy'))
+    names = ['m20t100', 'm20t20', 'm20t5', 'm30t50', 'm20_score_fidelity',
+             'greedy_shapley', 'greedy_fidelity', 'm1000_random']
+    paths = [os.path.join(base_dir, n) for n in names]
+    compare_final_fidelity(paths, save_dst='./img/karate_club/experiments/final_fidelity.png')
+    compare_fidelity_over_time(paths, save_dst='./img/karate_club/experiments/fidelity_over_time.png')
 
-    names = ['second', 'greedy_all', 'random']
+    names = ['m30t50', 'greedy_fidelity', 'm1000_random']
     paths = [os.path.join(base_dir, n) for n in names]
     compare_per_node(paths)
 
-    names = ['first', 'second', 'third', 'score_fidelity', 'random', 'greedy', 'original', 'greedy_all', 'greedy_one']
-    paths = [os.path.join(base_dir, n) for n in names]
-    compare_final_fidelity(paths)
+    display_one_experiment(os.path.join(base_dir, 'greedy_fidelity'))
 
 
 if __name__ == '__main__':
