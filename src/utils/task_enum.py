@@ -14,3 +14,4 @@ class Experiment(Enum):
     DEFAULT = 1
     GREEDY = 2
     NO_Q = 3
+    RANDOM = 4

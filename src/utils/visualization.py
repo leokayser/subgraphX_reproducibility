@@ -19,7 +19,7 @@ def plot_results(sparsity_list: List[List[float]], fidelity_list: List[List[floa
 
     plt.show()
 
-def plot_search_tree(search_tree: nx.DiGraph, save_dst: str = None):
+def plot_search_tree(search_tree: nx.DiGraph, save_dst: str = None, ax=None):
     labels = nx.get_node_attributes(search_tree, 'score')
     labels = {n: float(f'{s:.2g}') for n, s in labels.items()}
 
@@ -41,12 +41,17 @@ def plot_search_tree(search_tree: nx.DiGraph, save_dst: str = None):
             borders[n] = 'red'
 
     pos = graphviz_layout(search_tree, prog="dot")
-    fig, ax = plt.subplots(dpi=200)
-    nx.draw(search_tree, pos, ax=ax, node_size=50, font_size=4, labels=labels, node_color=colors,
-            edgecolors=borders)
-            #linewidths=borders, edgecolors=borders)
 
-    if save_dst:
-        fig.savefig(save_dst)
+    if ax is None:
+        fig, ax = plt.subplots(dpi=200)
+        nx.draw(search_tree, pos, ax=ax, node_size=50, font_size=4, labels=labels, node_color=colors,
+                edgecolors=borders)
+                #linewidths=borders, edgecolors=borders)
 
-    plt.show()
+        if save_dst:
+            fig.savefig(save_dst)
+
+        plt.show()
+    else:
+        nx.draw(search_tree, pos, ax=ax, node_size=50, font_size=4, labels=labels, node_color=colors,
+                edgecolors=borders)

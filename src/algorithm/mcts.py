@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from collections import defaultdict
 
 from typing import Set, Callable, List, Dict, Union
@@ -8,7 +9,7 @@ import torch.nn
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx, k_hop_subgraph
 
-from src.utils.task_enum import Task
+from src.utils.task_enum import Task, Experiment
 
 
 class MCTSNode:
@@ -48,7 +49,7 @@ class MCTS:
     def __init__(self, graph: Data, exp_weight: float, n_min: int, score_func: Callable, model: torch.nn.Module,
                  t: int, num_layers: int, high2low: bool = False, max_children: int = -1,
                  task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None,
-                 skip_to_leaves: bool = True):
+                 skip_to_leaves: bool = True, experiment: Experiment = None):
         self.W = defaultdict(float)  # total reward of each node
         self.C = defaultdict(int)  # total visit count for each node
         self.children: Dict[MCTSNode, List[MCTSNode]] = {}  # nodes and their children
@@ -65,10 +66,14 @@ class MCTS:
 
         self.high2low = high2low
         self.max_children = max_children  # negative number means consider all nodes
-        self.skip_to_leaves = skip_to_leaves  # hastens computation, but only offers explanations of size n_min
 
         self.nodes_to_keep = nodes_to_keep if nodes_to_keep is not None else []
         self.task = task
+        self.skip_to_leaves = skip_to_leaves  # hastens computation, but only offers explanations of size n_min
+        self.experiment = experiment  # for reproducible changes in the algorithm
+
+        if experiment == Experiment.GREEDY:
+            self.C = defaultdict(lambda:1)
 
         if self.task == Task.GRAPH_CLASSIFICATION:
             self.root = MCTSNode(graph, n_min, set(range(graph.num_nodes)))
@@ -114,7 +119,11 @@ class MCTS:
         return u
 
     def _ucb(self, node, parent) -> float:  # upper confidence bound
-        ucb = self._q(node) + self._u(node, parent)
+        if self.experiment == Experiment.NO_Q:
+            ucb = self._u(node, parent)
+        else:
+            ucb = self._q(node) + self._u(node, parent)
+
         return ucb
 
     def _select_path_by_ucb(self) -> List[MCTSNode]:  # choose best leaf by ucb, training
@@ -134,7 +143,12 @@ class MCTS:
         else:
             children = self._expand_node(mcts_node)
 
+        # this computation matters for the random experiment
         children_scores = [_score_helper(child) for child in children]
+
+        if self.experiment == Experiment.RANDOM:
+            return np.random.choice(children)
+
         return max(children, key=_score_helper)
 
     def _expand_node(self, mcts_node) -> List[MCTSNode]:
@@ -213,13 +227,15 @@ class MCTS:
         if size >= len(self.root.node_set):
             print('Warning: The requested explanation-set is too large.')
             return self.root
+        elif size <= 0:
+            raise RecursionError('There is no subgraph of the requested size')
 
         candidates = [k for k in self.R.keys() if len(k.node_set) == size]
 
         if candidates:
             return max(candidates, key=self._r)
         else:
-            return None
+            return self.best_node(size-1)
 
     def _node_info(self, mcts_node) -> str:
         pruned_nodes = list(mcts_node.get_pruned_nodes())

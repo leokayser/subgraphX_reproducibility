@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Callable
 
 import torch.nn
 from torch_geometric.data import Data
@@ -11,7 +11,8 @@ from src.utils.task_enum import Task, Experiment
 class SubgraphX:
     def __init__(self, model: torch.nn.Module, num_layers: int, exp_weight: float, m: int, t: int,
                  high2low: bool = False, max_children: int = -1,
-                 task: Task = Task.GRAPH_CLASSIFICATION):
+                 task: Task = Task.GRAPH_CLASSIFICATION,
+                 value_func: Callable = mc_l_shapley, experiment: Experiment = None):
         """
         Subgraph-X Implementation from the Paper "On Explainability of Graph Neural Networks via Subgraph Explorations"
         :param model: The model to explain. Output of the model have to be normalized probabilities for each class.
@@ -22,24 +23,26 @@ class SubgraphX:
         :param high2low: ordering of nodes when considering pruning action by their node degree
         :param max_children: Maximum number of nodes to consider for pruning actions. -1 means consider all nodes.
         :param task: Graph, Node Classification or Link prediction
+        :param value_func: Function used to score subgraph explanation
         """
         self.model = model
         self.num_layers = num_layers
         self.exp_weight = exp_weight
         self.m = m
         self.t = t
-        self.value_func = mc_l_shapley  # only implementation for now
+        self.value_func = value_func
 
         self.high2low = high2low
         self.max_children = max_children
 
         self.task = task
+        self.experiment = experiment
 
     def _get_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int],
-                  exhaustive: bool, experiment: Experiment = None):
+                  exhaustive: bool):
         return MCTS(graph, self.exp_weight, n_min, self.value_func, self.model, self.t,
                     self.num_layers, self.high2low, self.max_children, self.task, nodes_to_keep,
-                    skip_to_leaves=(not exhaustive))
+                    skip_to_leaves=(not exhaustive), experiment=self.experiment)
 
     def __call__(self, graph: Data, n_min: int, nodes_to_keep: List[int] = None, exhaustive: bool = False):
         """
@@ -62,6 +65,6 @@ class SubgraphX:
         return explanation.node_set, mcts
 
     def generate_mcts(self, graph: Data, n_min: int, nodes_to_keep: List[int],
-                      exhaustive: bool, experiment: Experiment = None):
+                      exhaustive: bool):
         """ Returns mcts object for in-depth experiments """
-        mcts = self._get_mcts(graph, n_min, nodes_to_keep, exhaustive, experiment)
+        return self._get_mcts(graph, n_min, nodes_to_keep, exhaustive)
