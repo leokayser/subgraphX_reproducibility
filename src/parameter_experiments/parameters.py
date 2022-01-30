@@ -53,7 +53,7 @@ def get_sx_params(model, **kwargs):
         "model": model,
         "num_layers": 2,
         "exp_weight": 5,
-        # "m": None, depends on snapshots
+        "m": None,
         "t": 50,
         "task": Task.NODE_CLASSIFICATION,
         "max_children": 12,
