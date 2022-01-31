@@ -9,6 +9,7 @@ from torch_geometric.loader import DataLoader
 from src.utils.task_enum import Task
 from src.utils.utils import get_device
 
+import src.utils.metrics as metrics
 
 @torch.no_grad()
 def _aggregate_scores(loader, model, class_idx, task: Task = Task.GRAPH_CLASSIFICATION,
@@ -121,3 +122,10 @@ def mc_l_shapley(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int
     score = _compute_marginal_contribution(include_data_list, exclude_data_list, model, predicted_class, task,
                                            nodes_to_keep)
     return score
+
+
+@torch.no_grad()
+def fidelity_wrapper(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int,
+                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None) -> float:
+    """ Wrapper so we can use fidelity in place of shapley value as metric in MCTS. """
+    return metrics.fidelity(graph=graph, node_set=subgraph, model=model, task=task, nodes_to_keep=nodes_to_keep)

@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from collections import defaultdict
 
 from typing import Set, Callable, List, Dict, Union
@@ -8,7 +9,7 @@ import torch.nn
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx, k_hop_subgraph
 
-from src.utils.task_enum import Task
+from src.utils.task_enum import Task, Experiment
 
 
 class MCTSNode:
@@ -17,12 +18,22 @@ class MCTSNode:
         self.n_min = n_min
         self.node_set = node_set
         self.score = score  # just for debugging display
+        self._hash = self.compute_hash()
+
+    def compute_hash(self):
+        l = list(self.node_set)
+        l.sort()
+        result = 98767 - len(l) * 555
+        for i, el in enumerate(l):
+            result = result + (hash(el) % 9999999) * 1001 + i
+        return result
 
     def is_terminal(self) -> bool:
         return len(self.node_set) <= self.n_min
 
     def __hash__(self) -> int:
-        return hash(list(self.node_set).sort())
+        return self._hash
+        #return hash(list(self.node_set).sort())
 
     def get_pruned_nodes(self) -> Set[int]:  # inverse of node set
         return set(range(self.graph.num_nodes)) - self.node_set
@@ -31,13 +42,14 @@ class MCTSNode:
         return f'{sorted(list(self.node_set))}: {self.score}'
 
     def __eq__(self, node2) -> bool:
-        return self.node_set == node2.node_set
+        return hash(self) == hash(node2) and self.node_set == node2.node_set
 
 
 class MCTS:
     def __init__(self, graph: Data, exp_weight: float, n_min: int, score_func: Callable, model: torch.nn.Module,
                  t: int, num_layers: int, high2low: bool = False, max_children: int = -1,
-                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None):
+                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None,
+                 skip_to_leaves: bool = True, experiment: Experiment = None):
         self.W = defaultdict(float)  # total reward of each node
         self.C = defaultdict(int)  # total visit count for each node
         self.children: Dict[MCTSNode, List[MCTSNode]] = {}  # nodes and their children
@@ -57,6 +69,11 @@ class MCTS:
 
         self.nodes_to_keep = nodes_to_keep if nodes_to_keep is not None else []
         self.task = task
+        self.skip_to_leaves = skip_to_leaves  # hastens computation, but only offers explanations of size n_min
+        self.experiment = experiment  # for reproducible changes in the algorithm
+
+        if experiment == Experiment.GREEDY:
+            self.C = defaultdict(lambda:1)
 
         if self.task == Task.GRAPH_CLASSIFICATION:
             self.root = MCTSNode(graph, n_min, set(range(graph.num_nodes)))
@@ -67,6 +84,8 @@ class MCTS:
                                                                  flow='source_to_target')
             self.root = MCTSNode(graph, n_min, set(node_tensor.tolist()))
             self.root.score = self._r(self.root)
+
+        self.paths = []  # for visualization only
 
     def _q(self, mcts_node) -> float:
         if self.C[mcts_node] == 0:
@@ -89,15 +108,22 @@ class MCTS:
 
     def _u(self, mcts_node, parent) -> float:  # utility from paper
         children = self.children[parent]
-        counts = [self.C[n] for n in children]
-        parent_count = sum(counts)
-        if parent_count == 0:  # for computational efficiency: all nodes unexplored
+        parent_count = 0
+        for c in children:
+            parent_count += self.C[c]
+        #counts = [self.C[n] for n in children]
+        #parent_count = sum(counts)
+        if parent_count == 0 and self.skip_to_leaves:  # for computational efficiency: all nodes unexplored
             return 0
         u = self.exp_weight * self._r(mcts_node) * math.sqrt(parent_count) / (1 + self.C[mcts_node])
         return u
 
     def _ucb(self, node, parent) -> float:  # upper confidence bound
-        ucb = self._q(node) + self._u(node, parent)
+        if self.experiment == Experiment.NO_Q:
+            ucb = self._u(node, parent)
+        else:
+            ucb = self._q(node) + self._u(node, parent)
+
         return ucb
 
     def _select_path_by_ucb(self) -> List[MCTSNode]:  # choose best leaf by ucb, training
@@ -117,7 +143,12 @@ class MCTS:
         else:
             children = self._expand_node(mcts_node)
 
+        # this computation matters for the random experiment
         children_scores = [_score_helper(child) for child in children]
+
+        if self.experiment == Experiment.RANDOM:
+            return np.random.choice(children)
+
         return max(children, key=_score_helper)
 
     def _expand_node(self, mcts_node) -> List[MCTSNode]:
@@ -184,9 +215,27 @@ class MCTS:
         if leaf not in self.leaves:
             self.leaves.append(leaf)
         self._backpropagate(path)
+        self.paths.append(path)  # for later visualization
 
     def best_leaf_node(self) -> MCTSNode:  # choose best leaf by reward only
         return max(self.leaves, key=self._r)
+
+    def best_node(self, size: int) -> MCTSNode:
+        if self.skip_to_leaves and size != self.n_min:
+            print('Warning: Some scores were skipped in the exploration phase. Set skip_to_leaves to False!')
+
+        if size >= len(self.root.node_set):
+            print('Warning: The requested explanation-set is too large.')
+            return self.root
+        elif size <= 0:
+            raise RecursionError('There is no subgraph of the requested size')
+
+        candidates = [k for k in self.R.keys() if len(k.node_set) == size]
+
+        if candidates:
+            return max(candidates, key=self._r)
+        else:
+            return self.best_node(size-1)
 
     def _node_info(self, mcts_node) -> str:
         pruned_nodes = list(mcts_node.get_pruned_nodes())
@@ -205,3 +254,31 @@ class MCTS:
         for mcts_node in self.W.keys():
             print(f'{i}: {mcts_node.info()}')
             i += 1
+
+    def search_tree_to_networkx(self):
+        def count_up():
+            count_up.counter = getattr(count_up, 'counter', 0) + 1
+            return count_up.counter - 1
+        mcts_node_to_id = defaultdict(count_up)
+
+        edgelist = []
+        for path in self.paths:
+            for i in range(len(path)-1):
+                edgelist.append((mcts_node_to_id[path[i]], mcts_node_to_id[path[i+1]]))
+        search_tree = nx.DiGraph(edgelist)
+
+        node_scores = {mcts_node_to_id[mcts_node] : score for mcts_node, score in self.R.items()}
+        nx.set_node_attributes(search_tree, values=node_scores, name="score")
+
+        node_visits = {mcts_node_to_id[mcts_node] : visits for mcts_node, visits in self.C.items()}
+        nx.set_node_attributes(search_tree, values=node_visits, name="visits")
+
+        node_best = {}
+        for n in range(self.n_min, len(self.root.node_set)):
+            best = self.best_node(n)
+            if best:
+                node_best[mcts_node_to_id[best]] = True
+        nx.set_node_attributes(search_tree, values=node_best, name="best")
+
+        return search_tree
+
