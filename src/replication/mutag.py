@@ -11,7 +11,7 @@ from torch import optim
 from torch.nn import ReLU, Linear, Softmax, Sigmoid, Dropout
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import Sequential, GCNConv, GINConv, global_max_pool, GNNExplainer
+from torch_geometric.nn import Sequential, GCNConv, GINConv, global_mean_pool, global_max_pool, GNNExplainer
 from torch_geometric.utils import to_networkx
 
 from src.algorithm.subgraph_x import SubgraphX
@@ -96,10 +96,11 @@ def get_model_gcn():
             ReLU(inplace=True),
             (GCNConv(hidden_dim, hidden_dim), 'x, edge_index -> x'),
             ReLU(inplace=True),
-            (global_max_pool, 'x, batch -> x'),
-            Linear(hidden_dim, output_dim),
-            # Sigmoid(),  # single output scalar: value between [0, 1]
-            # Softmax(dim=1),
+            (global_mean_pool, 'x, batch -> x'),
+            Linear(hidden_dim, hidden_dim),
+            ReLU(),
+            Dropout(),
+            Linear(hidden_dim, output_dim)
         ]
     ).to(device)
 
@@ -132,8 +133,8 @@ def get_model_gin():
     return model
 
 
-def train_model_or_load(train_loader, dev_loader, model_type='gcn', add_softmax=True):
-    save_dst = f'./checkpoints/mutag/{model_type}.pt'
+def train_model_or_load(train_loader, dev_loader, model_type='gcn', postfix='', add_softmax=True):
+    save_dst = f'./checkpoints/mutag/{model_type}{postfix}.pt'
     model = get_model_gcn() if model_type == 'gcn' else get_model_gin()
     loss_func = torch.nn.CrossEntropyLoss()
     device = get_device()
@@ -200,7 +201,7 @@ def collect_subgraphx_expl(model, graph_list):
     return res_dict
 
 
-def collect_gnn_expl(model, graph_list, path='./result_data/mutag/gcn_gnnexp'):
+def collect_gnn_expl(model, graph_list, gnnexp_epochs=2000, path='./result_data/mutag/gcn_gnnexp'):
     device = get_device()
 
     num_graphs = len(graph_list)
@@ -215,7 +216,7 @@ def collect_gnn_expl(model, graph_list, path='./result_data/mutag/gcn_gnnexp'):
         save_data(path, res_dict)
 
     # collect explanations for all nodes with a fixed n_min
-    explainer = GNNExplainer(model, epochs=2000, return_type='prob')
+    explainer = GNNExplainer(model, epochs=gnnexp_epochs, return_type='prob')
 
     counter = 1
     for g in test_graph_idx:
@@ -251,15 +252,15 @@ def main():
     batch_size = 188
     train_loader, dev_loader, test_loader, dev_list = split_dataset(dataset, batch_size, (0.8, 1.0))
 
-    model_type = 'gin'
+    model_type = 'gcn'
 
     model, loss_func = train_model_or_load(train_loader, dev_loader, model_type, add_softmax=True)
     print(model)
     test_loss, test_acc = test(model, False, dev_loader, loss_func)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
-    path = f'./result_data/mutag/{model_type}_gnnexp'
-    collect_gnn_expl(model, dev_list, path=path)
+    path = f'./result_data/mutag/{model_type}_gnnexp_quick'
+    collect_gnn_expl(model, dev_list, gnnexp_epochs=200, path=path)
 
     gnn_dict = load_data(path)
     gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
@@ -269,11 +270,11 @@ def main():
     sparsity_list = [gnn_sparsity]
     fidelity_list = [gnn_fidelity]
     labels = ['GNN Explainer']
-    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_result.png')
+    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_result_quick.png')
 
     # save runtime to file
     data_str = f'GNN Explainer: {gnn_runtime}'
-    save_str(path=f'./result_data/mutag/{model_type}_runtime.txt', data=data_str)
+    save_str(path=f'./result_data/mutag/{model_type}_runtime_quick.txt', data=data_str)
     print(data_str)
 
 
