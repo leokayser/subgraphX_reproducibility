@@ -190,8 +190,8 @@ def compare_per_node(paths: List[str], labels: List[str] = None):
     for node in nodes:
         compare_final_fidelity(paths, labels, node=node)
 
-
-def main():
+def visualize_karate_experiments():
+    """KARATE-CLUB"""
     base_dir = './result_data/karate_club/experiments'
 
     names = ['m20t100', 'm20t20', 'm20t5', 'm30t50', 'm20_score_fidelity',
@@ -205,6 +205,26 @@ def main():
     compare_per_node(paths)
 
     display_one_experiment(os.path.join(base_dir, 'greedy_fidelity'))
+
+
+def visualize_mutag_experiments():
+    """MUTAG"""
+    base_dir = './result_data/mutag/experiments'
+
+    names = ['m20t100', 'm20t5', 'greedy_one', 'm100_random']
+    paths = [os.path.join(base_dir, n) for n in names]
+    compare_final_fidelity(paths, save_dst='./img/mutag/experiments/final_fidelity.png')
+    compare_fidelity_over_time(paths, save_dst='./img/mutag/experiments/fidelity_over_time.png')
+
+    names = ['m20t100', 'm20t5', 'greedy_one']
+    paths = [os.path.join(base_dir, n) for n in names]
+    compare_per_node(paths)
+
+    display_one_experiment(os.path.join(base_dir, 'm20t5'))
+
+def main():
+    # visualize_karate_experiments()
+    visualize_mutag_experiments()
 
 
 if __name__ == '__main__':

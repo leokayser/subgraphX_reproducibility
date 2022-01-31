@@ -132,13 +132,13 @@ def get_model_gin():
     return model
 
 
-def train_model_or_load(train_loader, dev_loader, model_type='gcn', add_softmax=True):
+def train_model_or_load(train_loader, dev_loader, model_type='gcn', add_softmax=True, only_load=False):
     save_dst = f'./checkpoints/mutag/{model_type}.pt'
     model = get_model_gcn() if model_type == 'gcn' else get_model_gin()
     loss_func = torch.nn.CrossEntropyLoss()
     device = get_device()
 
-    if os.path.isfile(save_dst):  # if checkpoint exists, load it
+    if only_load or os.path.isfile(save_dst):  # if checkpoint exists, load it
         model.load_state_dict(torch.load(save_dst))
     else:
         optimizer = optim.Adam(model.parameters(), lr=0.005)
@@ -257,6 +257,7 @@ def main():
     print(model)
     test_loss, test_acc = test(model, False, dev_loader, loss_func)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
+    return
 
     path = f'./result_data/mutag/{model_type}_gnnexp'
     collect_gnn_expl(model, dev_list, path=path)

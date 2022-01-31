@@ -7,8 +7,8 @@ from matplotlib import pyplot as plt
 plt.rcParams['figure.dpi'] = 200
 
 from src.utils.utils import set_seed
-from src.parameter_experiments.run_experiments import prepare_experiment
-from src.parameter_experiments.parameters import get_sx_params
+from src.parameter_experiments.run_experiments import prepare_karate_experiment
+from src.parameter_experiments.parameters import get_sx_params_karate
 from src.utils.task_enum import Task, Experiment
 from src.algorithm.subgraph_x import SubgraphX
 from src.utils.metrics import sparsity, fidelity
@@ -19,8 +19,8 @@ T=20
 
 def compute_points():
     set_seed(0)  # IMPORTANT!!
-    model, graph_loader = prepare_experiment()
-    sx_params = get_sx_params(model, experiment=Experiment.RANDOM, max_children=-1, m=M, t=T)
+    model, graph_loader = prepare_karate_experiment()
+    sx_params = get_sx_params_karate(model, experiment=Experiment.RANDOM, max_children=-1, m=M, t=T)
     subgraphx = SubgraphX(**sx_params)
 
     test_graph = next(iter(graph_loader))
