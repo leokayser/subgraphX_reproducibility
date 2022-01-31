@@ -23,6 +23,7 @@ from src.utils.utils import get_device, set_seed, get_predicted_class, convert_e
 from src.utils.visualization import plot_results
 
 
+
 def download_and_prepare_dataset() -> MoleculeDataset:
     return MoleculeDataset('./datasets', 'MUTAG')
 
@@ -159,13 +160,12 @@ def train_model_or_load(train_loader, dev_loader, model_type='gcn', postfix='', 
         return model, loss_func
 
 
-def collect_subgraphx_expl(model, graph_list):
+def collect_subgraphx_expl(model, graph_list, path, only_one_mcts=True, workerno=None):
     device = get_device()
 
     num_graphs = len(graph_list)
     test_graph_idx = torch.arange(0, num_graphs).tolist()
 
-    path = './result_data/mutag/subgraphx'
     if os.path.isfile(path):
         res_dict = load_data(path)
     else:
@@ -175,33 +175,53 @@ def collect_subgraphx_expl(model, graph_list):
         save_data(path, res_dict)
 
     # collect explanations for all nodes with a fixed n_min
-    subgraphx = SubgraphX(model, num_layers=3, exp_weight=10, m=20, t=100)
+    subgraphx = SubgraphX(model, num_layers=3, exp_weight=5, m=20, t=100, task=Task.GRAPH_CLASSIFICATION)
 
-    for n_min in [4]:
-        print(f'\nstarting n_min={n_min}')
-        counter = 1
+    def record_data(graph, explanation, curr_duration):
+        sparsity_score = sparsity(graph, explanation)
+        fidelity_score = fidelity(graph, explanation, model)
+
+        result_tuple = (explanation, sparsity_score, fidelity_score, curr_duration)
+        print(result_tuple)
+        res_dict[g] = res_dict[g] + [result_tuple]
+
+    n_mins = [4, 5, 6, 7, 8, 9, 10, 11, 12]
+    if not only_one_mcts:
+        raise NotImplementedError()
+        # for n_min in n_mins:
+        #     counter = 1
+        #     print(f'\nstarting {n_min}')
+        #     for node in test_node_idx:
+        #         start_time = time.time()
+        #         explanation_set, _ = subgraphx(test_graph, n_min=n_min, nodes_to_keep=[node], exhaustive=False)
+        #         end_time = time.time()
+        #         duration = end_time - start_time
+        #
+        #         record_data(node, explanation_set, duration)
+        #         print(f'finished node {counter} of {len(test_node_idx)}')
+        #         counter += 1
+    else:
         for g in test_graph_idx:
             graph = graph_list[g]
-            print(graph.x.shape)
-            start_time = time.time()
-            explanation_set, _ = subgraphx(graph, n_min=n_min)
+            print(f'{f"worker {workerno}" if workerno is not None else ""} starting graph {g}: {graph}\n')
 
+            start_time = time.time()
+            _, mcts = subgraphx(graph, n_min=n_mins[0], exhaustive=True)
             end_time = time.time()
             duration = end_time - start_time
 
-            sparsity_score = sparsity(graph, explanation_set)
-            fidelity_score = fidelity(graph, explanation_set, model)
-
-            result_tuple = (explanation_set, sparsity_score, fidelity_score, duration)
-            res_dict[g] = res_dict[g] + [result_tuple]
-            print(f'finished graph {counter} of {len(test_graph_idx)}: {result_tuple}')
-            counter += 1
-
+            print(f'{f"worker {workerno}" if workerno is not None else ""} finished graph {g}')
+            for n_min in n_mins:
+                if n_min > len(graph.x):
+                    break
+                explanation_set = mcts.best_node(n_min).node_set
+                record_data(graph, explanation_set, duration)
+            print()
     save_data(path, res_dict)
     return res_dict
 
 
-def collect_gnn_expl(model, graph_list, gnnexp_epochs=2000, path='./result_data/mutag/gcn_gnnexp'):
+def collect_gnn_expl(model, graph_list, gnnexp_epochs, path):
     device = get_device()
 
     num_graphs = len(graph_list)
@@ -253,28 +273,35 @@ def main():
     train_loader, dev_loader, test_loader, dev_list = split_dataset(dataset, batch_size, (0.8, 1.0))
 
     model_type = 'gcn'
+    print(f'Using model type \'{model_type}\'')
 
     model, loss_func = train_model_or_load(train_loader, dev_loader, model_type, add_softmax=True)
-    print(model)
     test_loss, test_acc = test(model, False, dev_loader, loss_func)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
-    path = f'./result_data/mutag/{model_type}_gnnexp_quick'
-    collect_gnn_expl(model, dev_list, gnnexp_epochs=200, path=path)
-
-    gnn_dict = load_data(path)
+    # Stats for GNNExplainer
+    path_gnnexp = f'./result_data/mutag/{model_type}_gnnexp'
+    # collect_gnn_expl(model, dev_list, gnnexp_epochs=200, path=path_gnnexp)
+    gnn_dict = load_data(path_gnnexp)
     gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
     gnn_runtime = compute_avg_runtime(gnn_dict)
 
+    # Stats for SubgraphX
+    path_subgx = f'./result_data/mutag/{model_type}_subgx'
+    # collect_subgraphx_expl(model, dev_list[:1], path_subgx)
+    sx_dict = load_data(path_subgx)
+    sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
+    sx_runtime = compute_avg_runtime(sx_dict)
+
     # plot graph
-    sparsity_list = [gnn_sparsity]
-    fidelity_list = [gnn_fidelity]
-    labels = ['GNN Explainer']
-    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_result_quick.png')
+    sparsity_list = [sx_sparsity, gnn_sparsity]
+    fidelity_list = [sx_fidelity, gnn_fidelity]
+    labels = ['SubgraphX', 'GNN Explainer']
+    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_result_both.png')
 
     # save runtime to file
-    data_str = f'GNN Explainer: {gnn_runtime}'
-    save_str(path=f'./result_data/mutag/{model_type}_runtime_quick.txt', data=data_str)
+    data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}'
+    save_str(path=f'./result_data/mutag/{model_type}_runtime.txt', data=data_str)
     print(data_str)
 
 

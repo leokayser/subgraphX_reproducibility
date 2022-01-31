@@ -3,7 +3,7 @@ from typing import List, Union
 from matplotlib import pyplot as plt
 
 import networkx as nx
-import pydot
+# import pydot
 from networkx.drawing.nx_pydot import graphviz_layout
 
 def plot_results(sparsity_list: List[List[float]], fidelity_list: List[List[float]], labels: List[str],
