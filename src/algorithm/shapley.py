@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from src.utils.task_enum import Task
-from src.utils.utils import get_device
+from src.utils.utils import get_predicted_class, get_scores, get_device
 
 import src.utils.metrics as metrics
 
@@ -129,3 +129,55 @@ def fidelity_wrapper(model: torch.nn.Module, graph: Data, subgraph: Set[int], t:
                  task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None) -> float:
     """ Wrapper so we can use fidelity in place of shapley value as metric in MCTS. """
     return metrics.fidelity(graph=graph, node_set=subgraph, model=model, task=task, nodes_to_keep=nodes_to_keep)
+
+
+@torch.no_grad()
+def mcts_gnn_score(model: torch.nn.Module, graph: Data, subgraph: Set[int], t: int, num_layers: int,
+                 task: Task = Task.GRAPH_CLASSIFICATION, nodes_to_keep: List[int] = None) -> float:
+    node_set = subgraph
+    device = get_device()
+    # if task == Task.NODE_CLASSIFICATION or task == Task.LINK_PREDICTION:  # exclude node to explain from zero padding
+    #     node_set = node_set - set(nodes_to_keep)
+
+    node_tensor = torch.tensor(list(node_set)).long()
+
+    # x_occluded = torch.clone(graph.x)
+    # x_occluded[node_tensor] = 0
+
+    x_subgraph = torch.zeros_like(graph.x)
+    x_subgraph[node_tensor] = graph.x[node_tensor]
+
+    batch = torch.zeros(graph.num_nodes).long()
+
+    if task == Task.GRAPH_CLASSIFICATION or task == Task.NODE_CLASSIFICATION:
+        scores = get_scores(model, graph.x, graph.edge_index, batch, train=False)
+        scores_subgraph = get_scores(model, x_subgraph, graph.edge_index, batch, train=False)
+    else:  # link prediction
+        x1 = torch.tensor([nodes_to_keep[0]]).to(device)
+        x2 = torch.tensor([nodes_to_keep[0]]).to(device)
+        scores = model(graph.x.to(device), graph.edge_index.to(device), x1, x2, ptr=None).detach().cpu()
+        scores_subgraph = model(x_subgraph.to(device), graph.edge_index.to(device), x1, x2, ptr=None).detach().cpu()
+
+        scores = scores.squeeze()
+        scores_subgraph = scores_subgraph.squeeze()
+
+    if task == Task.GRAPH_CLASSIFICATION:
+        predicted_class = torch.argmax(scores, dim=1)
+        scores_subgraph = scores_subgraph[:, predicted_class]
+        result = scores_subgraph.item()
+
+    elif task == Task.NODE_CLASSIFICATION:
+        index_of_interest = nodes_to_keep[0]
+        scores = scores[index_of_interest]
+        scores_subgraph = scores_subgraph[index_of_interest]
+
+        predicted_class = torch.argmax(scores, dim=0)
+        scores_subgraph = scores_subgraph[predicted_class]
+        result = scores_subgraph.item()
+
+    else:  # Link prediction
+        predicted_class = torch.argmax(scores, dim=0)
+        scores_subgraph = scores_subgraph[predicted_class]
+        result = scores_subgraph.item()
+
+    return result
