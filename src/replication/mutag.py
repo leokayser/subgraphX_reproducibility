@@ -80,7 +80,7 @@ def split_dataset(dataset: MoleculeDataset, batch_size: int = 32, split_ratio=(0
     dev_loader = DataLoader(dev_list, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_list, batch_size=batch_size, shuffle=False)
 
-    return train_loader, dev_loader, test_loader, dev_list
+    return train_loader, dev_loader, test_loader, graph_list
 
 
 def get_model_gcn():
@@ -178,7 +178,6 @@ def collect_subgraphx_expl(model, graph_list, path, workerno=None, value_func=sh
     # collect explanations for all nodes with a fixed n_min
     subgraphx = SubgraphX(model, num_layers=3, exp_weight=5, m=20, t=100, task=Task.GRAPH_CLASSIFICATION,
                           value_func=value_func)
-    print(subgraphx)
 
     def record_data(graph, explanation, curr_duration):
         sparsity_score = sparsity(graph, explanation)
@@ -195,15 +194,16 @@ def collect_subgraphx_expl(model, graph_list, path, workerno=None, value_func=sh
         print(f'{f"worker {workerno}" if workerno is not None else ""} starting graph {g}: {graph}\n')
 
         start_time = time.time()
-        _, mcts = subgraphx(graph, n_min=n_mins[0], exhaustive=True)
+        #_, mcts = subgraphx(graph, n_min=n_mins[0], exhaustive=True)
+        explanation_set,_ = subgraphx(graph, n_min=5)
         end_time = time.time()
         duration = end_time - start_time
 
         print(f'{f"worker {workerno}" if workerno is not None else ""} finished graph {g}')
-        for n_min in n_mins:
+        for n_min in [5]:#n_mins:
             if n_min > len(graph.x):
                 break
-            explanation_set = mcts.best_node(n_min).node_set
+            #explanation_set = mcts.best_node(n_min).node_set
             record_data(graph, explanation_set, duration)
         print()
         
@@ -255,6 +255,43 @@ def collect_gnn_expl(model, graph_list, gnnexp_epochs, path):
     return res_dict
 
 
+def runtime_study(model, graph_list, path):
+    device = get_device()
+
+    subgraphx = SubgraphX(model, num_layers=3, exp_weight=5, m=20, t=100, task=Task.GRAPH_CLASSIFICATION)
+    #explainer = GNNExplainer(model, epochs=2000, return_type='prob')
+
+    if os.path.isfile(path):
+        res_dict = load_data(path)
+    else:
+        res_dict = dict()
+        for n in range(10, 45):
+            res_dict[n] = []
+        save_data(path, res_dict)
+
+    for n in range(10, 45):
+        print(f"starting n={n}")
+        for graph in graph_list:
+            if len(graph.x) == n:
+                print(f'Found graph with {n} nodes: {graph}')
+                start_time = time.time()
+                explanation, _ = subgraphx(graph, n_min=5)
+                #node_feat_mask, edge_mask = explainer.explain_graph(graph.x.to(device), graph.edge_index.to(device))
+                end_time = time.time()
+                duration = end_time - start_time
+
+                #explanation = convert_edge_mask_to_subset(graph.edge_index, edge_mask, n_min=5)
+
+                sparsity_score = sparsity(graph, explanation)
+                fidelity_score = fidelity(graph, explanation, model)
+
+                result_tuple = (explanation, sparsity_score, fidelity_score, duration)
+                print(result_tuple)
+                res_dict[n] = res_dict[n] + [result_tuple]
+                break
+    save_data(path, res_dict)
+
+
 def main():
     set_seed(0)  # IMPORTANT!
     dataset = download_and_prepare_dataset()
@@ -269,22 +306,22 @@ def main():
     test_loss, test_acc = test(model, False, dev_loader, loss_func)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
-    # Stats for SubgraphX
-    path_mctsgnn = f'./result_data/mutag/{model_type}_mctsgnn'
-    collect_subgraphx_expl(model, dev_list, path_mctsgnn, value_func=shapley.mcts_gnn_score)
+    # Stats for MCTS_GNN
+    path_mctsgnn = f'./result_data/mutag/{model_type}_runtime_experiment_MCTS'
+    # collect_subgraphx_expl(model, dev_list, path_mctsgnn, value_func=shapley.mcts_gnn_score)
     mcts_dict = load_data(path_mctsgnn)
     mcts_sparsity, mcts_fidelity = aggregate_fidelity_sparsity(mcts_dict)
     mcts_runtime = compute_avg_runtime(mcts_dict)
 
     # Stats for GNNExplainer
-    path_gnnexp = f'./result_data/mutag/{model_type}_gnnexp'
-    # collect_gnn_expl(model, dev_list, gnnexp_epochs=200, path=path_gnnexp)
+    path_gnnexp = f'./result_data/mutag/{model_type}_runtime_experiment_GNNExp'
+    # collect_gnn_expl(model, dev_list, gnnexp_epochs=2000, path=path_gnnexp)
     gnn_dict = load_data(path_gnnexp)
     gnn_sparsity, gnn_fidelity = aggregate_fidelity_sparsity(gnn_dict)
     gnn_runtime = compute_avg_runtime(gnn_dict)
 
     # Stats for SubgraphX
-    path_subgx = f'./result_data/mutag/{model_type}_subgx'
+    path_subgx = f'./result_data/mutag/{model_type}_runtime_experiment_subX'
     # collect_subgraphx_expl(model, dev_list, path_subgx)
     sx_dict = load_data(path_subgx)
     sx_sparsity, sx_fidelity = aggregate_fidelity_sparsity(sx_dict)
@@ -292,9 +329,11 @@ def main():
 
     # plot graph
     sparsity_list = [sx_sparsity, mcts_sparsity, gnn_sparsity]
+    print(sparsity_list)
     fidelity_list = [sx_fidelity, mcts_fidelity, gnn_fidelity]
+    print(fidelity_list)
     labels = ['SubgraphX', 'MCTS_GNN', 'GNNExplainer']
-    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_result_all.png')
+    plot_results(sparsity_list, fidelity_list, labels, save_dst=f'./img/mutag/{model_type}_timing_results.png')
 
     # save runtime to file
     data_str = f'Subgraphx: {sx_runtime}\nGNN Explainer: {gnn_runtime}\nMCTS_GNN: {mcts_runtime}'

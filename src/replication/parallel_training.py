@@ -24,12 +24,12 @@ def worker(workload):
     end_index = int(num_graphs * ((i + 1) / n))
     print(f'worker {i} doing graphs in range({start_index},{end_index})')
 
-    model_type = 'gcn'
+    model_type = 'gin'
 
     model, loss_func = train_model_or_load(train_loader, dev_loader, model_type, add_softmax=True)
 
     # Stats for SubgraphX
-    path_subgx = f'./result_data/mutag/{model_type}_subgx_{i}'
+    path_subgx = f'./result_data/mutag/{model_type}_subgxall_{i}'
     collect_subgraphx_expl(model, dev_list[start_index:end_index], path_subgx, workerno=i)
     print(f"Worker {i} finished")
 
@@ -49,6 +49,6 @@ def join_dicts(n: int, path: str):
 
 
 if __name__ == '__main__':
-    # process_parallel()
-    model_type = 'gcn'
-    join_dicts(n=5, path=f'./result_data/mutag/{model_type}_subgx')
+    #process_parallel()
+    model_type = 'gin'
+    join_dicts(n=5, path=f'./result_data/mutag/{model_type}_subgxall')
