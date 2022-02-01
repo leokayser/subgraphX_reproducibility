@@ -31,7 +31,7 @@ import src.transposition.karate_club as karate_club
 import src.replication.mutag as mutag
 from src.parameter_experiments.parameters import SubgraphXSnapshot,\
     get_sx_params_karate, get_sx_params_mutag, get_experiment_params
-from src.algorithm.shapley import fidelity_wrapper
+from src.algorithm.shapley import fidelity_wrapper, mcts_gnn_score
 
 
 def prepare_karate_experiment():
@@ -48,19 +48,29 @@ def prepare_karate_experiment():
 
     return model, test_loader
 
-def prepare_mutag_experiment():
+def prepare_mutag_experiment(model_type: str):
+    if model_type != 'gin' and model_type != 'gcn':
+        raise TypeError(f"Unknown model type: {model_type}")
     dataset = mutag.download_and_prepare_dataset()
     train_loader, dev_loader, test_loader, dev_list = mutag.split_dataset(dataset,
                                                                           batch_size=188, split_ratio=(0.8, 1.0))
     model, loss_func = mutag.train_model_or_load(train_loader, dev_loader,
-                                                 model_type='gin', add_softmax=True, only_load=True)
+                                                 model_type=model_type, add_softmax=True, only_load=True)
     test_loss, test_acc = test(model, False, dev_loader, loss_func)
     print(f'test loss: {test_loss}, test_acc: {test_acc}')
 
     return model, dev_list
 
 
-def subgraphx_with_snapshots(sx_params, test_graph, nodes_to_keep, n_mins, snapshots, idx, snapshot_after):
+def subgraphx_with_snapshots(sx_params, test_graph, nodes_to_keep, n_mins, snapshots, idx, snapshot_after,
+                             score_and_fidelity_path = None):
+    if score_and_fidelity_path:
+        if os.path.isfile(score_and_fidelity_path):
+            data_points = load_data(score_and_fidelity_path)
+        else:
+            data_points = dict()
+            save_data(score_and_fidelity_path, data_points)
+
     subgraphx = SubgraphX(**sx_params)
     mcts = subgraphx.generate_mcts(test_graph, n_min=min(n_mins), nodes_to_keep=nodes_to_keep, exhaustive=True)
     total_time = 0
@@ -89,9 +99,21 @@ def subgraphx_with_snapshots(sx_params, test_graph, nodes_to_keep, n_mins, snaps
                                      iteration_no=i, timestamp=total_time)
             snapshots[idx][i] = snap
 
+    if score_and_fidelity_path:
+        for mcts_node, metric_score in mcts.R.items():
+            subgraph = mcts_node.node_set
+            fidelity_score = fidelity(test_graph, subgraph, sx_params["model"], task=sx_params["task"],
+                                      nodes_to_keep=nodes_to_keep)
+            if len(subgraph) not in data_points:
+                data_points[len(subgraph)] = []
+            data_points[len(subgraph)].append((metric_score, fidelity_score))
+        save_data(score_and_fidelity_path, data_points)
 
-def run_experiment(name, experiment_params, sx_params, graph_loader, seed=0):
+
+def run_experiment(name, experiment_params, sx_params, graph_loader, seed=0, score_samples_path=None):
     set_seed(seed)  # IMPORTANT!!
+    if score_samples_path:
+        score_samples_path = os.path.join(experiment_params['base_dir'], score_samples_path)
 
     path = os.path.join(experiment_params['base_dir'], name)
     snapshot_after = experiment_params['snapshot_after']
@@ -142,7 +164,8 @@ def run_experiment(name, experiment_params, sx_params, graph_loader, seed=0):
             test_graph = graph_loader[idx]
 
         # do subgraphx thing
-        subgraphx_with_snapshots(sx_params, test_graph, nodes_to_keep, n_mins, snapshots, idx, snapshot_after)
+        subgraphx_with_snapshots(sx_params, test_graph, nodes_to_keep, n_mins, snapshots, idx, snapshot_after,
+                                 score_and_fidelity_path=score_samples_path)
 
     print(f'Experiment took {sum([snaps[max(snaps.keys())].timestamp for _,snaps in snapshots.items()]):.2f} seconds')
     save_data(path, snapshots)
@@ -185,27 +208,48 @@ def karate_experiments():
     run_experiment('m30t50', exp_params, sx_params, graph_loader)
 
 
-def mutag_experiments():
-    base_dir = './result_data/mutag/experiments'
-    model, graph_list = prepare_mutag_experiment()
+def mutag_experiments(model_type: str):
+    base_dir = f'./result_data/mutag/experiments_{model_type}'
+    model, graph_list = prepare_mutag_experiment(model_type)
     exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10, 15, 20])
 
-    # sx_params = get_sx_params_mutag(model)
-    # run_experiment('m20t100', exp_params, sx_params, graph_list)
+    sx_params = get_sx_params_mutag(model)
+    run_experiment('m20t100', exp_params, sx_params, graph_list)
 
-    # sx_params = get_sx_params_mutag(model, t=5)
-    # run_experiment('m2t5', exp_params, sx_params, graph_list)
+    sx_params = get_sx_params_mutag(model, t=5)
+    run_experiment('m20t5', exp_params, sx_params, graph_list)
 
-    # exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1])
-    # sx_params = get_sx_params_mutag(model, value_func=fidelity_wrapper, experiment=Experiment.GREEDY, max_children=-1)
-    # run_experiment('greedy_one', exp_params, sx_params, graph_list)
+    sx_params = get_sx_params_mutag(model, t=20)
+    run_experiment('m20t20', exp_params, sx_params, graph_list)
 
-    # exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10, 15, 20, 50, 100])
-    # sx_params = get_sx_params_mutag(model, value_func=fidelity_wrapper, experiment=Experiment.RANDOM, max_children=-1)
-    # run_experiment('m100_random', exp_params, sx_params, graph_list)
+    sx_params = get_sx_params_mutag(model, value_func=fidelity_wrapper)
+    run_experiment('m20_fidelity', exp_params, sx_params, graph_list)
+
+    sx_params = get_sx_params_mutag(model, experiment=Experiment.GREEDY, max_children=-1)
+    run_experiment('m20t100_greedy', exp_params, sx_params, graph_list)
+
+    sx_params = get_sx_params_mutag(model, value_func=fidelity_wrapper, experiment=Experiment.GREEDY, max_children=-1)
+    run_experiment('m20_fidelity_greedy', exp_params, sx_params, graph_list)
+
+    exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1])
+    sx_params = get_sx_params_mutag(model, value_func=fidelity_wrapper, experiment=Experiment.GREEDY, max_children=-1)
+    run_experiment('m1_fidelity_greedy', exp_params, sx_params, graph_list)
+
+    exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10, 15, 20, 50, 100])
+    sx_params = get_sx_params_mutag(model, experiment=Experiment.RANDOM, max_children=-1)
+    run_experiment('m100_random', exp_params, sx_params, graph_list)
+
+    exp_params = get_experiment_params(base_dir=base_dir, snapshot_after=[1, 5, 10])
+    sx_params = get_sx_params_mutag(model, experiment=Experiment.RANDOM, max_children=-1)
+    run_experiment('m10_shapley_random', exp_params, sx_params, graph_list, score_samples_path='random_shapley_samples')
+
+    sx_params = get_sx_params_mutag(model, value_func=mcts_gnn_score, experiment=Experiment.RANDOM, max_children=-1)
+    run_experiment('m10_mcts_gnn_random', exp_params, sx_params, graph_list, score_samples_path='random_mcts_gnn_samples')
 
 def main():
-    mutag_experiments()
+    mutag_experiments('gin')
+    mutag_experiments('gcn')
+    karate_experiments()
 
 
 if __name__ == '__main__':
