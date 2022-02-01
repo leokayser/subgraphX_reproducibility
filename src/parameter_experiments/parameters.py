@@ -47,14 +47,32 @@ class SubgraphXSnapshot:
     search_tree: nx.DiGraph
     timestamp: float
 
+def get_sx_params_mutag(model, **kwargs):
+    sx_params = {
+        "model": model,
+        "num_layers": 3,
+        "exp_weight": 10,
+        "m": None,
+        "t": 100,
+        "task": Task.GRAPH_CLASSIFICATION,
+        "max_children": 12,
+        "experiment": None,
+        "value_func": mc_l_shapley,
+    }
+    for kw in kwargs:
+        if kw not in sx_params:
+            raise TypeError(f"Unknown Parameter: {kw}")
+    sx_params.update(kwargs)
 
-def get_sx_params(model, **kwargs):
+    return sx_params
+
+def get_sx_params_karate(model, **kwargs):
     sx_params = {
         "model": model,
         "num_layers": 2,
         "exp_weight": 5,
         "m": None,
-        "t": 50,
+        "t": 100,
         "task": Task.NODE_CLASSIFICATION,
         "max_children": 12,
         "experiment": None,
@@ -70,7 +88,7 @@ def get_sx_params(model, **kwargs):
 def get_experiment_params(base_dir: str = "", **kwargs):
     experiment_params = {
         "base_dir": base_dir,
-        "snapshot_after": [1, 5, 10, 15, 20, 25, 30],
+        "snapshot_after": [1, 5, 10, 15, 20],
         "n_mins": [4, 5, 6, 7, 8, 9, 10, 11, 12],
     }
 
